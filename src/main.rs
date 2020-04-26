@@ -270,6 +270,21 @@ fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
     }
 }
 
+static HELP: &str = r#"
+help: Show this menu
+pull <delay>: Change delay for pulling out of quad tab
+push <delay>: Change delay for pushing into tab/trade
+div <delay>: Change delay for div macro
+chrome <file> <times>: Open a autoroll file, with name <file>, and roll item <times>
+mchrome <file>: Create example chrome file with name <file>. To be used with chrome later.
+
+Press Home to pull from tab
+Press Insert to push into inv
+Press F7 to use chance macro
+
+Press CTRL + C to quit this program.
+"#;
+
 fn command_line(settings: &SettingsMutexArc) {
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
@@ -344,6 +359,9 @@ fn command_line(settings: &SettingsMutexArc) {
                     },
                 )
                 .unwrap();
+            }
+            ("help", _) => {
+                println!("Available Commands: {}", HELP);
             }
             (_, _) => println!("Unknown command"),
         }
