@@ -1,0 +1,10 @@
+{
+  "item_name": "Vaal Regalia",
+  "mods": [
+    {
+      "name": "explode",
+      "is_prefix": true
+    }
+  ],
+  "auto_aug_regal": false
+}

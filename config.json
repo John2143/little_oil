@@ -1,1 +1,5 @@
-{"pull_delay":10000,"push_delay":10,"div_delay":100}
+{
+  "pull_delay": 50,
+  "push_delay": 35,
+  "div_delay": 100
+}

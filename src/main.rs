@@ -180,6 +180,7 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
 
 fn read_item_on_cursor() -> String {
     let mut ctx: ClipboardContext = clipboard::ClipboardProvider::new().unwrap();
+    ctx.set_contents("".into()).unwrap();
 
     loop {
         KeybdKey::LControlKey.press();
@@ -190,7 +191,11 @@ fn read_item_on_cursor() -> String {
         KeybdKey::LControlKey.release();
 
         match ctx.get_contents() {
-            Ok(s) => return s,
+            Ok(s) => {
+                if s != "" {
+                    return s;
+                }
+            },
             Err(_) => {}
         }
     }
@@ -235,11 +240,12 @@ fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
 
     assert!(times > 0);
 
-    let sleep_click = 30;
-    let sleep_read = 150;
+    let sleep_click = 100;
+    let sleep_read = 500;
 
     let mut i = 0;
     loop {
+        std::thread::sleep(std::time::Duration::from_millis(sleep_click));
         click_right(alt.0, alt.1);
         std::thread::sleep(std::time::Duration::from_millis(sleep_click));
         click(slot.0, slot.1);
@@ -251,20 +257,25 @@ fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
         }
 
         if (!res.has_prefix && config.needs_prefix()) || (!res.has_suffix && !config.needs_suffix()) {
+            std::thread::sleep(std::time::Duration::from_millis(sleep_click));
             click_right(aug.0, aug.1);
             std::thread::sleep(std::time::Duration::from_millis(sleep_click));
             click(slot.0, slot.1);
             std::thread::sleep(std::time::Duration::from_millis(sleep_read));
-        }
 
-        let res = check_roll(&read_item_on_cursor(), &config);
-        if res.has_mod {
-            return Some(res);
+            let res = check_roll(&read_item_on_cursor(), &config);
+            if res.has_mod {
+                return Some(res);
+            }
         }
 
         i += 1;
 
         if i == times {
+            return Some(res);
+        }
+
+        if KeybdKey::NumLockKey.is_toggled() {
             return Some(res);
         }
     }
@@ -411,7 +422,8 @@ fn empty_inv(settings: &SettingsMutexArc) {
     println!("empty inv (delay {})", delay);
 
     KeybdKey::LControlKey.press();
-    empty_inv_macro(5, delay);
+    empty_inv_macro(5, delay / 2);
+    empty_inv_macro(5, delay / 2);
     KeybdKey::LControlKey.release();
 }
 
