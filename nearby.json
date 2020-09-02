@@ -1,0 +1,10 @@
+{
+  "item_name": "Hubris Circlet",
+  "mods": [
+    {
+      "name": "nearby",
+      "is_prefix": false
+    }
+  ],
+  "auto_aug_regal": false
+}

@@ -240,10 +240,11 @@ fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
 
     assert!(times > 0);
 
-    let sleep_click = 100;
-    let sleep_read = 500;
+    let sleep_click = 80;
+    let sleep_read = 300;
 
     let mut i = 0;
+    let mut res;
     loop {
         std::thread::sleep(std::time::Duration::from_millis(sleep_click));
         click_right(alt.0, alt.1);
@@ -251,34 +252,51 @@ fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
         click(slot.0, slot.1);
         std::thread::sleep(std::time::Duration::from_millis(sleep_read));
 
-        let res = check_roll(&read_item_on_cursor(), &config);
+        res = check_roll(&read_item_on_cursor(), &config);
         if res.has_mod {
-            return Some(res);
+            break;
         }
 
-        if (!res.has_prefix && config.needs_prefix()) || (!res.has_suffix && !config.needs_suffix()) {
+        if (!res.has_prefix && config.needs_prefix()) || (!res.has_suffix && config.needs_suffix()) {
             std::thread::sleep(std::time::Duration::from_millis(sleep_click));
             click_right(aug.0, aug.1);
             std::thread::sleep(std::time::Duration::from_millis(sleep_click));
             click(slot.0, slot.1);
             std::thread::sleep(std::time::Duration::from_millis(sleep_read));
 
-            let res = check_roll(&read_item_on_cursor(), &config);
+            res = check_roll(&read_item_on_cursor(), &config);
             if res.has_mod {
-                return Some(res);
+                break;
             }
         }
 
         i += 1;
 
         if i == times {
-            return Some(res);
+            break;
         }
 
         if KeybdKey::NumLockKey.is_toggled() {
             return Some(res);
         }
     }
+
+    if res.has_mod && config.auto_aug_regal {
+        std::thread::sleep(std::time::Duration::from_millis(sleep_click));
+        click_right(aug.0, aug.1);
+        std::thread::sleep(std::time::Duration::from_millis(sleep_click));
+        click(slot.0, slot.1);
+
+        std::thread::sleep(std::time::Duration::from_millis(sleep_click));
+        click_right(reg.0, reg.1);
+        std::thread::sleep(std::time::Duration::from_millis(sleep_click));
+        click(slot.0, slot.1);
+        std::thread::sleep(std::time::Duration::from_millis(sleep_read));
+
+        res = check_roll(&read_item_on_cursor(), &config);
+    }
+
+    Some(res)
 }
 
 static HELP: &str = r#"

@@ -1,0 +1,22 @@
+{
+  "item_name": "Large Cluster Jewel",
+  "mods": [
+    {
+      "name": "snowstorm",
+      "is_prefix": true
+    },
+    {
+      "name": "blast-freeze",
+      "is_prefix": true
+    },
+    {
+      "name": "blanket",
+      "is_prefix": true
+    },
+    {
+      "name": "stormrider",
+      "is_prefix": true
+    }
+  ],
+  "auto_aug_regal": true
+}
