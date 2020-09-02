@@ -1,0 +1,14 @@
+{
+  "item_name": "Gemini Claw",
+  "mods": [
+    {
+      "name": "increased phys",
+      "is_prefix": true
+    },
+    {
+      "name": "to phys",
+      "is_prefix": true
+    }
+  ],
+  "auto_aug_regal": false
+}
