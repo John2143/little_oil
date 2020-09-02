@@ -224,7 +224,7 @@ fn chance(_settings: &SettingsMutexArc) {
 fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
     #![allow(unused_variables)]
     let alt = (115, 302);
-    let aug = (237, 345);
+    let aug = (237, 355);
     let reg = (437, 295);
     let slot = (323, 522);
 
