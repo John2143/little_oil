@@ -1,8 +1,8 @@
 {
-  "item_name": "Vaal Regalia",
+  "item_name": "Bone Helmet",
   "mods": [
     {
-      "name": "explode",
+      "name": "elemental",
       "is_prefix": true
     }
   ],

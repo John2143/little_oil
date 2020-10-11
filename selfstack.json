@@ -1,0 +1,14 @@
+{
+  "item_name": "Medium Cluster Jewel",
+  "mods": [
+    {
+      "name": "first",
+      "is_prefix": true
+    },
+    {
+      "name": "skills have 25% increased effect",
+      "is_prefix": true
+    }
+  ],
+  "auto_aug_regal": true
+}

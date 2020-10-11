@@ -240,7 +240,7 @@ fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
 
     assert!(times > 0);
 
-    let sleep_click = 160;
+    let sleep_click = 30;
     let sleep_read = 300;
 
     let mut i = 0;
@@ -399,7 +399,7 @@ fn command_line(settings: &SettingsMutexArc) {
 
 fn click(x: i32, y: i32) {
     move_mouse(x, y);
-    std::thread::sleep(std::time::Duration::from_millis(5));
+    std::thread::sleep(std::time::Duration::from_millis(10));
     MouseButton::LeftButton.press();
     std::thread::sleep(std::time::Duration::from_millis(5));
     MouseButton::LeftButton.release();
@@ -407,7 +407,7 @@ fn click(x: i32, y: i32) {
 
 fn click_right(x: i32, y: i32) {
     move_mouse(x, y);
-    std::thread::sleep(std::time::Duration::from_millis(5));
+    std::thread::sleep(std::time::Duration::from_millis(10));
     MouseButton::RightButton.press();
     std::thread::sleep(std::time::Duration::from_millis(5));
     MouseButton::RightButton.release();
@@ -417,35 +417,59 @@ fn move_mouse(x: i32, y: i32) {
     inputbot::MouseCursor.move_abs(x * 2, y);
 }
 
+const NORMAL_INV_COLOR: [u32; 60] = [
+    151586815, 185141503, 134744319, 134744319, 134678783,
+    151521535, 151521535, 117901311, 117901311, 117901311, 151521535, 151521535, 117901311,
+    117901311, 117901311, 151587071, 134744319, 117901311, 117901311, 117901311, 151587327,
+    151587327, 134744319, 134744319, 117901567, 151587327, 151587327, 134744319, 134744319,
+    117901567, 168364287, 168430079, 151521535, 151521535, 134744319, 185075711, 168430079,
+    151587071, 151587071, 134744319, 185075711, 168430079, 151587071, 151587071, 134744319,
+    168364031, 168430079, 151587071, 151587071, 151587327, 168430079, 151587327, 134744319,
+    134744319, 151587327, 168430079, 151587327, 134744319, 134744319, 151587327,
+];
+
 fn empty_inv_macro(start_slot: u32, delay: u64) {
     let inv_loc = (1297, 618);
     let inv_delta = 53;
 
+    let frame = match take_screenshot() {
+        Ok(frame) => frame,
+        Err(()) => return (),
+    };
+
     for x in (start_slot / 5)..12 {
         for y in (start_slot % 5)..5 {
-            click(
-                (x * inv_delta + inv_loc.0) as i32,
-                (y * inv_delta + inv_loc.1) as i32,
-            );
-            std::thread::sleep(std::time::Duration::from_millis(delay - 10));
+            let mousex = (x * inv_delta + inv_loc.0);
+            let mousey = (y * inv_delta + inv_loc.1);
+            let color = frame.get_pixel(mousex as usize, mousey as usize);
+            let is_right_color = color == NORMAL_INV_COLOR[(x*5 + y) as usize];
+            //println!("{} {} {} {}", x, y, color, is_right_color);
+
+            if(!is_right_color){
+                click(
+                    (x * inv_delta + inv_loc.0) as i32,
+                    (y * inv_delta + inv_loc.1) as i32,
+                );
+                std::thread::sleep(std::time::Duration::from_millis(delay));
+            }
         }
     }
 
-    move_mouse(655, 801);
+    //move_mouse(655, 801);
 }
 
 fn empty_inv(settings: &SettingsMutexArc) {
     let delay = { settings.lock().unwrap().push_delay };
 
     println!("empty inv (delay {})", delay);
+    let slot = if KeybdKey::NumLockKey.is_toggled() { 5 } else { 0 };
 
     KeybdKey::LControlKey.press();
-    empty_inv_macro(5, delay / 2);
-    empty_inv_macro(5, delay / 2);
+    empty_inv_macro(slot, delay);
+    empty_inv_macro(slot, delay);
     KeybdKey::LControlKey.release();
 }
 
-#[allow(dead_code)]
 struct ScreenshotData {
     height: usize,
     width: usize,
