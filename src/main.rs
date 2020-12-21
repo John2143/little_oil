@@ -223,10 +223,10 @@ fn chance(_settings: &SettingsMutexArc) {
 
 fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
     #![allow(unused_variables)]
-    let alt = (115, 302);
-    let aug = (237, 355);
-    let reg = (437, 295);
-    let slot = (323, 522);
+    let alt = (115, 264);
+    let aug = (237, 316);
+    let reg = (437, 263);
+    let slot = (323, 448);
 
     let config: AutoRollConfig = {
         match load_config(&path, None) {
@@ -537,8 +537,8 @@ fn asdf(settings: &SettingsMutexArc) {
 
     let px: f64 = (625f64 - 17f64) / 23f64;
     let pys = [
-        187, 213, 240, 266, 292, 319, 345, 371, 398, 424, 450, 477, 503, 529, 556, 582, 608, 635,
-        661, 687, 713, 740, 766, 792,
+        160, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581, 607, 634,
+        660, 686, 712, 739, 765, //792,
     ];
 
     KeybdKey::LControlKey.press();

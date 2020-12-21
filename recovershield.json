@@ -1,0 +1,10 @@
+{
+  "item_name": "Titanium Spirit Shield",
+  "mods": [
+    {
+      "name": "energy shield when you block",
+      "is_prefix": false
+    }
+  ],
+  "auto_aug_regal": false
+}
