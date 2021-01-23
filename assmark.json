@@ -1,0 +1,10 @@
+{
+  "item_name": "Ruby Ring",
+  "mods": [
+    {
+      "name": "assassin",
+      "is_prefix": false
+    }
+  ],
+  "auto_aug_regal": false
+}

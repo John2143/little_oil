@@ -1,0 +1,10 @@
+{
+  "item_name": "Agate Amulet",
+  "mods": [
+    {
+      "name": "skill gems",
+      "is_prefix": true
+    }
+  ],
+  "auto_aug_regal": false
+}
