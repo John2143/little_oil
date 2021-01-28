@@ -115,6 +115,14 @@ fn main() {
 
     {
         let settings_arc = settings_arc.clone();
+        KeybdKey::RControlKey.bind(move || {
+            println!("Resetting inv colors");
+            reset_inv_colors();
+        });
+    }
+
+    {
+        let settings_arc = settings_arc.clone();
         KeybdKey::F7Key.bind(move || {
             chance(&settings_arc.clone());
         });
@@ -417,18 +425,12 @@ fn move_mouse(x: i32, y: i32) {
     inputbot::MouseCursor.move_abs(x * 2, y);
 }
 
-const NORMAL_INV_COLOR: [u32; 60] = [
-168298495, 168430079, 134744319, 134744319, 134744319, 151587071, 151587327, 134744319, 134744319,
-117901311, 151587071, 151587327, 134744319, 134744319, 117901311, 151587327, 134744319, 134744319,
-134744319, 117901311, 151587327, 151587327, 134744319, 134744319, 117901311, 151587327, 151587327,
-134744319, 134744319, 117901311, 168364031, 168364287, 134744319, 134744319, 117967103, 168298495,
-168430079, 134744319, 134744319, 134744319, 168298495, 168430079, 134744319, 134744319, 134744319,
-168364031, 151587327, 134744319, 134744319, 134810111, 168429823, 134810111, 117967103, 117967103,
-134810111, 168429823, 134810111, 117967103, 117967103, 134810111, 
-];
+use std::sync::RwLock;
+use once_cell::sync::Lazy;
+static NORMAL_INV_COLOR: Lazy<RwLock<[u32; 60]>> = Lazy::new(|| RwLock::new([0; 60]));
 
-fn empty_inv_macro(start_slot: u32, delay: u64) {
-    let inv_loc = (1297, 618);
+fn reset_inv_colors() {
+    let inv_loc = (1279, 618);
     let inv_delta = 53;
 
     let frame = match take_screenshot() {
@@ -436,16 +438,40 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
         Err(()) => return (),
     };
 
+    let mut inv_color = NORMAL_INV_COLOR.write().unwrap();
+
+    for x in 0..12 {
+        for y in 0..5 {
+            let mousex = x * inv_delta + inv_loc.0;
+            let mousey = y * inv_delta + inv_loc.1;
+            let color = frame.get_pixel(mousex as usize, mousey as usize);
+
+            inv_color[(x*5 + y) as usize] = color;
+        }
+    }
+}
+
+fn empty_inv_macro(start_slot: u32, delay: u64) {
+    let inv_loc = (1279, 618);
+    let inv_delta = 53;
+
+    let frame = match take_screenshot() {
+        Ok(frame) => frame,
+        Err(()) => return (),
+    };
+
+    let inv_color = *NORMAL_INV_COLOR.read().unwrap();
+
     for x in (start_slot / 5)..12 {
         for y in (start_slot % 5)..5 {
-            let mousex = (x * inv_delta + inv_loc.0);
-            let mousey = (y * inv_delta + inv_loc.1);
+            let mousex = x * inv_delta + inv_loc.0;
+            let mousey = y * inv_delta + inv_loc.1;
             let color = frame.get_pixel(mousex as usize, mousey as usize);
             //println!("{},", color);
-            let is_right_color = color == NORMAL_INV_COLOR[(x*5 + y) as usize];
+            let is_right_color = color == inv_color[(x*5 + y) as usize];
             //println!("{} {} {} {}", x, y, color, is_right_color);
 
-            if(!is_right_color){
+            if !is_right_color {
                 click(
                     (x * inv_delta + inv_loc.0) as i32,
                     (y * inv_delta + inv_loc.1) as i32,
@@ -462,10 +488,12 @@ fn empty_inv(settings: &SettingsMutexArc) {
     let delay = { settings.lock().unwrap().push_delay };
 
     println!("empty inv (delay {})", delay);
-    let slot = if KeybdKey::NumLockKey.is_toggled() { 5 } else { 0 };
+    //let slot = if KeybdKey::NumLockKey.is_toggled() { 5 } else { 0 };
+    let slot = 0;
 
     KeybdKey::LControlKey.press();
     empty_inv_macro(slot, delay);
+    std::thread::sleep(std::time::Duration::from_millis(delay * 2));
     empty_inv_macro(slot, delay);
     KeybdKey::LControlKey.release();
 }
