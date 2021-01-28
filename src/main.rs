@@ -5,7 +5,7 @@ use inputbot::MouseButton;
 use rand::Rng;
 
 use std::io::{self, BufRead};
-use std::sync;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +14,7 @@ struct Settings {
     pull_delay: u64,
     push_delay: u64,
     div_delay: u64,
+    vertical_gamer: bool,
 }
 #[derive(Serialize, Deserialize, Debug)]
 struct AutoRollMod {
@@ -45,7 +46,10 @@ static DEFAULT_SETTINGS: Settings = Settings {
     pull_delay: 50,
     push_delay: 40,
     div_delay: 100,
+    vertical_gamer: false,
 };
+
+static SETTINGS: Lazy<RwLock<Settings>> = Lazy::new(|| RwLock::new(DEFAULT_SETTINGS));
 
 static CONFIG_PATH: &str = "./config.json";
 
@@ -98,50 +102,30 @@ fn main() {
 
     println!("{:?}", set);
 
-    let settings_arc = sync::Arc::new(sync::Mutex::new(set));
-    {
-        let settings_arc = settings_arc.clone();
-        KeybdKey::HomeKey.bind(move || {
-            asdf(&settings_arc);
-        });
-    }
-
-    {
-        let settings_arc = settings_arc.clone();
-        KeybdKey::InsertKey.bind(move || {
-            empty_inv(&settings_arc.clone());
-        });
-    }
-
-    {
-        let settings_arc = settings_arc.clone();
-        KeybdKey::RControlKey.bind(move || {
-            println!("Resetting inv colors");
-            reset_inv_colors();
-        });
-    }
-
-    {
-        let settings_arc = settings_arc.clone();
-        KeybdKey::F7Key.bind(move || {
-            chance(&settings_arc.clone());
-        });
-    }
+    *SETTINGS.write().unwrap() = set;
+    KeybdKey::HomeKey.bind(move || {
+        asdf();
+    });
+    KeybdKey::InsertKey.bind(move || {
+        empty_inv();
+    });
+    KeybdKey::RControlKey.bind(move || {
+        println!("Resetting inv colors");
+        reset_inv_colors();
+    });
+    KeybdKey::F7Key.bind(move || {
+        chance();
+    });
 
     let inputs = std::thread::spawn(|| inputbot::handle_input_events());
 
-    let cmdline = {
-        let settings_arc = settings_arc.clone();
-        std::thread::spawn(move || {
-            command_line(&settings_arc.clone());
-        })
-    };
+    let cmdline = std::thread::spawn(move || {
+        command_line();
+    });
 
     inputs.join().unwrap();
     cmdline.join().unwrap();
 }
-
-type SettingsMutexArc = sync::Arc<sync::Mutex<Settings>>;
 
 fn split_space(input: &str) -> (&str, &str) {
     for (i, c) in input.chars().enumerate() {
@@ -209,7 +193,7 @@ fn read_item_on_cursor() -> String {
     }
 }
 
-fn chance(_settings: &SettingsMutexArc) {
+fn chance() {
     let chance = (237, 292);
     let scour = (169, 472);
     let slot = (323, 522);
@@ -322,7 +306,7 @@ Press F7 to use chance macro
 Press CTRL + C to quit this program.
 "#;
 
-fn command_line(settings: &SettingsMutexArc) {
+fn command_line() {
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
         match split_space(&line.unwrap()) {
@@ -331,7 +315,7 @@ fn command_line(settings: &SettingsMutexArc) {
                 println!("pull delay is {}", rest);
                 match rest.parse() {
                     Ok(x) => {
-                        let mut s = settings.lock().unwrap();
+                        let mut s = SETTINGS.write().unwrap();
                         s.pull_delay = x;
                         save_config(CONFIG_PATH, &*s).unwrap();
                     }
@@ -342,7 +326,7 @@ fn command_line(settings: &SettingsMutexArc) {
                 println!("push delay is {}", rest);
                 match rest.parse() {
                     Ok(x) => {
-                        let mut s = settings.lock().unwrap();
+                        let mut s = SETTINGS.write().unwrap();
                         s.push_delay = x;
                         //save_config(CONFIG_PATH, &s).unwrap();
                     }
@@ -353,7 +337,7 @@ fn command_line(settings: &SettingsMutexArc) {
                 println!("div delay is {}", rest);
                 match rest.parse() {
                     Ok(x) => {
-                        let mut s = settings.lock().unwrap();
+                        let mut s = SETTINGS.write().unwrap();
                         s.div_delay = x;
                         //save_config(CONFIG_PATH, &s).unwrap();
                     }
@@ -422,7 +406,14 @@ fn click_right(x: i32, y: i32) {
 }
 
 fn move_mouse(x: i32, y: i32) {
-    inputbot::MouseCursor.move_abs(x * 2, y);
+    let vertical_gamer = { SETTINGS.read().unwrap().vertical_gamer };
+    let (x, y) = if vertical_gamer {
+        (x, y * 2)
+    } else {
+        (x * 2, y)
+    };
+
+    inputbot::MouseCursor.move_abs(x, y);
 }
 
 use std::sync::RwLock;
@@ -432,6 +423,8 @@ static NORMAL_INV_COLOR: Lazy<RwLock<[u32; 60]>> = Lazy::new(|| RwLock::new([0; 
 fn reset_inv_colors() {
     let inv_loc = (1279, 618);
     let inv_delta = 53;
+
+    click(618, 618);
 
     let frame = match take_screenshot() {
         Ok(frame) => frame,
@@ -484,8 +477,8 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
     //move_mouse(655, 801);
 }
 
-fn empty_inv(settings: &SettingsMutexArc) {
-    let delay = { settings.lock().unwrap().push_delay };
+fn empty_inv() {
+    let delay = { SETTINGS.read().unwrap().push_delay };
 
     println!("empty inv (delay {})", delay);
     //let slot = if KeybdKey::NumLockKey.is_toggled() { 5 } else { 0 };
@@ -519,8 +512,7 @@ fn take_screenshot() -> Result<ScreenshotData, ()> {
         match cap.frame() {
             Ok(fr) => {
                 return Ok(ScreenshotData {
-                    height: height,
-                    width: width,
+                    height, width,
                     pixels: fr.to_vec(),
                 })
             }
@@ -553,8 +545,8 @@ impl ScreenshotData {
     }
 }
 
-fn asdf(settings: &SettingsMutexArc) {
-    let delay = { settings.lock().unwrap().pull_delay };
+fn asdf() {
+    let delay = { SETTINGS.read().unwrap().pull_delay };
 
     let frame = match take_screenshot() {
         Ok(frame) => frame,
