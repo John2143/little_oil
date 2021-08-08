@@ -1,8 +1,8 @@
 {
-  "item_name": "Hubris Circlet",
+  "item_name": "Blue Pearl Amulet",
   "mods": [
     {
-      "name": "physical",
+      "name": "skill gems",
       "is_prefix": true
     }
   ],

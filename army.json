@@ -1,8 +1,8 @@
 {
-  "item_name": "Hubris Circlet",
+  "item_name": "Platinum New Vastir Watchstone",
   "mods": [
     {
-      "name": "physical",
+      "name": "encounters",
       "is_prefix": true
     }
   ],

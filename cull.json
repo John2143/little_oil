@@ -1,0 +1,10 @@
+{
+  "item_name": "Sorcerer Gloves",
+  "mods": [
+    {
+      "name": "cull",
+      "is_prefix": false
+    }
+  ],
+  "auto_aug_regal": false
+}

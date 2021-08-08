@@ -1,0 +1,14 @@
+{
+  "item_name": "Titanium Lex Proxima Watchstone",
+  "mods": [
+    {
+      "name": "sulphite",
+      "is_prefix": true
+    },
+    {
+      "name": "packed",
+      "is_prefix": true
+    }
+  ],
+  "auto_aug_regal": false
+}

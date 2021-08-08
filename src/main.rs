@@ -187,7 +187,7 @@ fn read_item_on_cursor() -> String {
                 if s != "" {
                     return s;
                 }
-            },
+            }
             Err(_) => {}
         }
     }
@@ -215,10 +215,10 @@ fn chance() {
 
 fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
     #![allow(unused_variables)]
-    let alt = (115, 264);
-    let aug = (237, 316);
-    let reg = (437, 263);
-    let slot = (323, 448);
+    let alt = (155, 354);
+    let aug = (300, 422);
+    let reg = (572, 354);
+    let slot = (444, 628);
 
     let config: AutoRollConfig = {
         match load_config(&path, None) {
@@ -232,8 +232,8 @@ fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
 
     assert!(times > 0);
 
-    let sleep_click = 30;
-    let sleep_read = 300;
+    let sleep_click = 20;
+    let sleep_read = 200;
 
     let mut i = 0;
     let mut res;
@@ -249,7 +249,8 @@ fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
             break;
         }
 
-        if (!res.has_prefix && config.needs_prefix()) || (!res.has_suffix && config.needs_suffix()) {
+        if (!res.has_prefix && config.needs_prefix()) || (!res.has_suffix && config.needs_suffix())
+        {
             std::thread::sleep(std::time::Duration::from_millis(sleep_click));
             click_right(aug.0, aug.1);
             std::thread::sleep(std::time::Duration::from_millis(sleep_click));
@@ -376,7 +377,7 @@ fn command_line() {
                                 name: "endbringer".into(),
                                 is_prefix: true,
                             },
-                        ]
+                        ],
                     },
                 )
                 .unwrap();
@@ -391,40 +392,35 @@ fn command_line() {
 
 fn click(x: i32, y: i32) {
     move_mouse(x, y);
-    std::thread::sleep(std::time::Duration::from_millis(10));
+    std::thread::sleep(std::time::Duration::from_millis(20));
     MouseButton::LeftButton.press();
-    std::thread::sleep(std::time::Duration::from_millis(5));
+    std::thread::sleep(std::time::Duration::from_millis(10));
     MouseButton::LeftButton.release();
 }
 
 fn click_right(x: i32, y: i32) {
     move_mouse(x, y);
-    std::thread::sleep(std::time::Duration::from_millis(10));
+    std::thread::sleep(std::time::Duration::from_millis(20));
     MouseButton::RightButton.press();
-    std::thread::sleep(std::time::Duration::from_millis(5));
+    std::thread::sleep(std::time::Duration::from_millis(10));
     MouseButton::RightButton.release();
 }
 
 fn move_mouse(x: i32, y: i32) {
-    let vertical_gamer = { SETTINGS.read().unwrap().vertical_gamer };
-    let (x, y) = if vertical_gamer {
-        (x, y * 2)
-    } else {
-        (x * 2, y)
-    };
-
-    inputbot::MouseCursor.move_abs(x, y);
+    inputbot::MouseCursor::move_abs(x, y);
 }
 
-use std::sync::RwLock;
 use once_cell::sync::Lazy;
+use std::sync::RwLock;
 static NORMAL_INV_COLOR: Lazy<RwLock<[u32; 60]>> = Lazy::new(|| RwLock::new([0; 60]));
 
 fn reset_inv_colors() {
-    let inv_loc = (1279, 618);
-    let inv_delta = 53;
+    //let inv_loc = (1311, 626);
+    let inv_loc = (1713, 834);
+    //let inv_delta = 53;
+    let inv_delta = 70;
 
-    click(618, 618);
+    //click(618, 618);
 
     let frame = match take_screenshot() {
         Ok(frame) => frame,
@@ -439,14 +435,16 @@ fn reset_inv_colors() {
             let mousey = y * inv_delta + inv_loc.1;
             let color = frame.get_pixel(mousex as usize, mousey as usize);
 
-            inv_color[(x*5 + y) as usize] = color;
+            inv_color[(x * 5 + y) as usize] = color;
         }
     }
 }
 
 fn empty_inv_macro(start_slot: u32, delay: u64) {
-    let inv_loc = (1279, 618);
-    let inv_delta = 53;
+    //let inv_loc = (1311, 626);
+    let inv_loc = (1713, 834);
+    //let inv_delta = 53;
+    let inv_delta = 70;
 
     let frame = match take_screenshot() {
         Ok(frame) => frame,
@@ -461,14 +459,18 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
             let mousey = y * inv_delta + inv_loc.1;
             let color = frame.get_pixel(mousex as usize, mousey as usize);
             //println!("{},", color);
-            let is_right_color = color == inv_color[(x*5 + y) as usize];
+            let is_right_color = color == inv_color[(x * 5 + y) as usize];
             //println!("{} {} {} {}", x, y, color, is_right_color);
 
             if !is_right_color {
-                click(
+                let (rx, ry) = (
                     (x * inv_delta + inv_loc.0) as i32,
                     (y * inv_delta + inv_loc.1) as i32,
                 );
+
+                //println!("clicking {} {}", rx, ry);
+
+                click(rx, ry);
                 std::thread::sleep(std::time::Duration::from_millis(delay));
             }
         }
@@ -486,8 +488,8 @@ fn empty_inv() {
 
     KeybdKey::LControlKey.press();
     empty_inv_macro(slot, delay);
-    std::thread::sleep(std::time::Duration::from_millis(delay * 2));
-    empty_inv_macro(slot, delay);
+    //std::thread::sleep(std::time::Duration::from_millis(delay * 2));
+    //empty_inv_macro(slot, delay);
     KeybdKey::LControlKey.release();
 }
 
@@ -512,9 +514,10 @@ fn take_screenshot() -> Result<ScreenshotData, ()> {
         match cap.frame() {
             Ok(fr) => {
                 return Ok(ScreenshotData {
-                    height, width,
+                    height,
+                    width,
                     pixels: fr.to_vec(),
-                })
+                });
             }
             Err(_) => {}
         }
@@ -555,11 +558,20 @@ fn asdf() {
 
     println!("take tab (delay {})", delay);
 
-    let px: f64 = (625f64 - 17f64) / 23f64;
+    //let px: f64 = (625f64 - 17f64) / 23f64;
+    //let pys = [
+    //160, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581, 607,
+    //634, 660, 686, 712, 739, 765, //792,
+    //];
+    let left_edge = 29;
+    let px = 830 - 795;
     let pys = [
-        160, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581, 607, 634,
-        660, 686, 712, 739, 765, //792,
+        260, 295, 330, 365, 400, 436, 471, 506, 541, 576, 611, 646, 681, 716, 751, 787, 822, 857,
+        892, 927, 962, 997, 1032, 1067,
     ];
+    //160, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581, 607,
+    //634, 660, 686, 712, 739, 765, //792,
+    //];
 
     KeybdKey::LControlKey.press();
 
@@ -568,12 +580,7 @@ fn asdf() {
         let ry = pys[y];
 
         for x in 0..24 {
-            let mut rxf = (x as f64) * px + 17f64;
-            if x == 2 {
-                rxf += 2f64;
-            }
-
-            let rx = rxf as usize;
+            let rx = x * px + left_edge;
 
             let col1 = frame.get_pixel(rx, ry);
             let col2 = frame.get_pixel(rx + 7, ry);

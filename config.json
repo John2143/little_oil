@@ -1,6 +1,6 @@
 {
   "pull_delay": 30,
-  "push_delay": 15,
+  "push_delay": 10,
   "div_delay": 100,
-  "vertical_gamer": true
+  "vertical_gamer": false
 }

@@ -1,0 +1,15 @@
+{
+  "item_name": "Large Cluster Jewel",
+  "mods": [
+    {
+      "name": "blanket",
+      "is_prefix": true
+    },
+    {
+      "name": "vengeful",
+      "is_prefix": true
+    }
+  ],
+  "auto_aug_regal": true
+}
+

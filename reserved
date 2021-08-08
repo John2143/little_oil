@@ -1,0 +1,18 @@
+{
+  "item_name": "Medium Cluster Jewel",
+  "mods": [
+    {
+      "name": "heraldry",
+      "is_prefix": true
+    },
+    {
+      "name": "harbinger",
+      "is_prefix": true
+    },
+    {
+      "name": "endbringer",
+      "is_prefix": true
+    }
+  ],
+  "auto_aug_regal": false
+}

@@ -1,8 +1,8 @@
 {
-  "item_name": "Hubris Circlet",
+  "item_name": "Fingerless Silk Gloves",
   "mods": [
     {
-      "name": "physical",
+      "name": "unnerve",
       "is_prefix": true
     }
   ],

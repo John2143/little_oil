@@ -1,8 +1,8 @@
 {
-  "item_name": "Hubris Circlet",
+  "item_name": "Quicksilver Flask",
   "mods": [
     {
-      "name": "physical",
+      "name": "alch",
       "is_prefix": true
     }
   ],
