@@ -5,24 +5,23 @@ use inputbot::MouseButton;
 use rand::Rng;
 
 use std::io::{self, BufRead};
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct Settings {
     pull_delay: u64,
     push_delay: u64,
     div_delay: u64,
-    vertical_gamer: bool,
+    inv_colors: Option<Vec<u32>>,
 }
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct AutoRollMod {
     name: String,
     is_prefix: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct AutoRollConfig {
     item_name: String,
     mods: Vec<AutoRollMod>,
@@ -46,10 +45,10 @@ static DEFAULT_SETTINGS: Settings = Settings {
     pull_delay: 50,
     push_delay: 40,
     div_delay: 100,
-    vertical_gamer: false,
+    inv_colors: None,
 };
 
-static SETTINGS: Lazy<RwLock<Settings>> = Lazy::new(|| RwLock::new(DEFAULT_SETTINGS));
+static SETTINGS: Lazy<RwLock<Settings>> = Lazy::new(|| RwLock::new(DEFAULT_SETTINGS.clone()));
 
 static CONFIG_PATH: &str = "./config.json";
 
@@ -60,9 +59,9 @@ fn save_config<T: Serialize>(path: &str, set: &T) -> Result<(), std::io::Error> 
     Ok(())
 }
 
-fn load_config<T>(path: &str, default: Option<T>) -> Result<T, String>
+fn load_config<T>(path: &str, default: Option<&T>) -> Result<T, String>
 where
-    T: serde::de::DeserializeOwned + Serialize,
+    T: serde::de::DeserializeOwned + Serialize + Clone,
 {
     match fs::File::open(&path) {
         Ok(mut f) => {
@@ -80,7 +79,7 @@ where
         }
         Err(_f) => match default {
             Some(obj) => match save_config(&path, &obj) {
-                Ok(_) => Ok(obj),
+                Ok(_) => Ok(obj.clone()),
                 Err(e) => Err(format!("Could not write defualt settings: {}", e)),
             },
             None => Err(format!("File not found and no default given")),
@@ -90,23 +89,49 @@ where
 
 fn main() {
     let mut _rand = rand::thread_rng();
-    let _r = _rand.gen_range(0, 10);
-    println!("{}", _r);
-    let set = match load_config(CONFIG_PATH, Some(DEFAULT_SETTINGS)) {
+    let set = match load_config(CONFIG_PATH, Some(&DEFAULT_SETTINGS)) {
         Ok(s) => s,
         Err(s) => {
-            println!("{}", s);
+            println!("Config load failed {}", s);
             return;
         }
     };
 
-    println!("{:?}", set);
-
     *SETTINGS.write().unwrap() = set;
+
+    println!("got config: {:?}", SETTINGS.read().unwrap());
+
+    match std::env::args().skip(1).next().as_deref() {
+        Some("sort") => {
+            sort_quad();
+            return;
+        }
+        Some("empty") => {
+            empty_inv();
+            return;
+        }
+        Some("reset_inv") => {
+            reset_inv_colors();
+            return;
+        }
+        Some("chance") => {
+            chance();
+            return;
+        }
+        Some(n) => {
+            println!("Invalid command: {}", n);
+            return;
+        }
+
+        None => {}
+    }
+
+    println!("starting in inputbot mode");
+
     KeybdKey::HomeKey.bind(move || {
-        asdf();
+        sort_quad();
     });
-    KeybdKey::InsertKey.bind(move || {
+    KeybdKey::AKey.bind(move || {
         empty_inv();
     });
     KeybdKey::RControlKey.bind(move || {
@@ -157,7 +182,6 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
         .filter(|s| s.contains(&config.item_name))
         .nth(0)
         .unwrap();
-
 
     RollResult {
         has_prefix: !maybe_name.starts_with(&config.item_name),
@@ -412,7 +436,6 @@ fn move_mouse(x: i32, y: i32) {
 
 use once_cell::sync::Lazy;
 use std::sync::RwLock;
-static NORMAL_INV_COLOR: Lazy<RwLock<[u32; 60]>> = Lazy::new(|| RwLock::new([0; 60]));
 
 fn reset_inv_colors() {
     //let inv_loc = (1311, 626);
@@ -427,7 +450,8 @@ fn reset_inv_colors() {
         Err(()) => return (),
     };
 
-    let mut inv_color = NORMAL_INV_COLOR.write().unwrap();
+    let mut colors = Vec::with_capacity(60);
+    colors.resize(60, 0);
 
     for x in 0..12 {
         for y in 0..5 {
@@ -435,9 +459,15 @@ fn reset_inv_colors() {
             let mousey = y * inv_delta + inv_loc.1;
             let color = frame.get_pixel(mousex as usize, mousey as usize);
 
-            inv_color[(x * 5 + y) as usize] = color;
+            colors[(x * 5 + y) as usize] = color;
         }
     }
+
+    let mut settings = SETTINGS.write().unwrap();
+
+    settings.inv_colors = Some(colors);
+
+    save_config(CONFIG_PATH, &*settings).unwrap();
 }
 
 fn empty_inv_macro(start_slot: u32, delay: u64) {
@@ -451,7 +481,16 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
         Err(()) => return (),
     };
 
-    let inv_color = *NORMAL_INV_COLOR.read().unwrap();
+    //TODO make it not allocate
+    let default_colors = {
+        let mut x = vec![0; 60];
+        x.resize(60, 0);
+        x
+    };
+
+    let settings = SETTINGS.read().unwrap();
+
+    let inv_color = settings.inv_colors.as_ref().unwrap_or(&default_colors);
 
     for x in (start_slot / 5)..12 {
         for y in (start_slot % 5)..5 {
@@ -548,7 +587,7 @@ impl ScreenshotData {
     }
 }
 
-fn asdf() {
+fn sort_quad() {
     let delay = { SETTINGS.read().unwrap().pull_delay };
 
     let frame = match take_screenshot() {
