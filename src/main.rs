@@ -118,6 +118,10 @@ fn main() {
             chance();
             return;
         }
+        Some("get") => {
+            move_mouse(1920 + 100, 100);
+            return;
+        }
         Some(n) => {
             println!("Invalid command: {}", n);
             return;
@@ -416,7 +420,7 @@ fn command_line() {
 
 fn click(x: i32, y: i32) {
     move_mouse(x, y);
-    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::thread::sleep(std::time::Duration::from_millis(30));
     MouseButton::LeftButton.press();
     std::thread::sleep(std::time::Duration::from_millis(10));
     MouseButton::LeftButton.release();
@@ -424,14 +428,14 @@ fn click(x: i32, y: i32) {
 
 fn click_right(x: i32, y: i32) {
     move_mouse(x, y);
-    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::thread::sleep(std::time::Duration::from_millis(30));
     MouseButton::RightButton.press();
     std::thread::sleep(std::time::Duration::from_millis(10));
     MouseButton::RightButton.release();
 }
 
 fn move_mouse(x: i32, y: i32) {
-    inputbot::MouseCursor::move_abs(x, y);
+    inputbot::MouseCursor::move_abs(x + 1920, y);
 }
 
 use once_cell::sync::Lazy;
@@ -472,7 +476,9 @@ fn reset_inv_colors() {
 
 fn empty_inv_macro(start_slot: u32, delay: u64) {
     //let inv_loc = (1311, 626);
+    //let inv_loc = (1713, 834);
     let inv_loc = (1713, 834);
+    //let inv_loc = (20, 20);
     //let inv_delta = 53;
     let inv_delta = 70;
 
@@ -625,13 +631,13 @@ fn sort_quad() {
             let col2 = frame.get_pixel(rx + 7, ry);
             let col3 = frame.get_pixel(rx + 15, ry);
 
-            let select_color = 0x77B4E7FF;
+            let select_color = 2008344320;
 
             if col1 == select_color || col2 == select_color || col3 == select_color {
                 click((rx + 10) as i32, (ry - 10) as i32);
                 std::thread::sleep(std::time::Duration::from_millis(delay - 10));
                 movesleft -= 1;
-            }
+            };
 
             //if(slotIsSelected(img, rx, ry) || slotIsSelected(img, rx + 15, ry)){
             //img.setPixelColor(Jimp.cssColorToHex("#FF0000"), rx + 1, ry);
