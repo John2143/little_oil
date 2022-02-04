@@ -749,7 +749,7 @@ fn sort_quad() {
 
     use std::convert::TryInto;
     image::save_buffer(
-        "./image.png",
+        "./image2.png",
         &frame.pixels,
         frame.width.try_into().unwrap(),
         frame.height.try_into().unwrap(),
