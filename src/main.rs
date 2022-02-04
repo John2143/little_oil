@@ -668,7 +668,7 @@ fn sort_quad() {
     };
 
     let px = if height == 1080 {
-        (2573 - 1920) / 24
+        (2573 - 1920) / 23
     } else if height == 1440 {
         830 - 795
     } else {
