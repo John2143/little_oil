@@ -732,6 +732,7 @@ fn sort_quad() {
 
     KeybdKey::LControlKey.release();
 
+    use std::convert::TryInto;
     image::save_buffer(
         "./image.png",
         &frame.pixels,
