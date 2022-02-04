@@ -595,9 +595,7 @@ fn take_screenshot() -> Result<ScreenshotData, ()> {
     println!("taking screenshot...");
     //let disp = scrap::Display::primary().unwrap();
     let disps = scrap::Display::all().unwrap();
-    let disp = disps[0];
-
-    let mut cap = scrap::Capturer::new(disp).unwrap();
+    let mut cap = scrap::Capturer::new(disps[0]).unwrap();
 
     let width = cap.width();
     let height = cap.height();
