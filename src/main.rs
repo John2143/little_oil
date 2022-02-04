@@ -615,7 +615,7 @@ fn take_screenshot() -> Result<ScreenshotData, ()> {
     for _ in 0..maxloops {
         match cap.frame() {
             Ok(fr) => {
-                println!("got screenshot", e);
+                println!("got screenshot");
                 return Ok(ScreenshotData {
                     height,
                     width,
