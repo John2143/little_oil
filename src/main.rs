@@ -611,7 +611,9 @@ fn take_screenshot() -> Result<ScreenshotData, ()> {
                     pixels: fr.to_vec(),
                 });
             }
-            Err(_) => {}
+            Err(e) => {
+                println!("screenshot failed... {}", e);
+            }
         }
         std::thread::sleep(std::time::Duration::from_millis(sleep));
     }
