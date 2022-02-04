@@ -732,5 +732,12 @@ fn sort_quad() {
 
     KeybdKey::LControlKey.release();
 
-    image::save_buffer("./image.png", &frame, 1920, 1080, image::ColorType::Rgba8).unwrap();
+    image::save_buffer(
+        "./image.png",
+        &frame.pixels,
+        frame.width,
+        frame.height,
+        image::ColorType::Rgba8,
+    )
+    .unwrap();
 }
