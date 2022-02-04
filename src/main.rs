@@ -466,10 +466,24 @@ use once_cell::sync::Lazy;
 use std::sync::RwLock;
 
 fn reset_inv_colors() {
-    //let inv_loc = (1311, 626);
-    let inv_loc = (1713, 834);
-    //let inv_delta = 53;
-    let inv_delta = 70;
+    let settings = SETTINGS.read().unwrap();
+    let height = settings.screen_height.unwrap_or(1080);
+
+    let inv_loc = if height == 1080 {
+        (1311, 626);
+    } else if height == 1440 {
+        (1713, 834)
+    } else {
+        panic!("invalid screen size");
+    };
+
+    let inv_delta = if height == 1080 {
+        53
+    } else if height == 1440 {
+        70
+    } else {
+        panic!("invalid screen size");
+    };
 
     //click(618, 618);
 
@@ -500,11 +514,10 @@ fn reset_inv_colors() {
 
 fn empty_inv_macro(start_slot: u32, delay: u64) {
     let settings = SETTINGS.read().unwrap();
-
     let height = settings.screen_height.unwrap_or(1080);
 
     let inv_loc = if height == 1080 {
-        (3190 - 1920, 640)
+        (1311, 626);
     } else if height == 1440 {
         (1713, 834)
     } else {
@@ -647,7 +660,7 @@ fn sort_quad() {
     //634, 660, 686, 712, 739, 765, //792,
     //];
     let left_edge = if height == 1080 {
-        15
+        21
     } else if height == 1440 {
         29
     } else {
