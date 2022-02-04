@@ -594,7 +594,8 @@ struct ScreenshotData {
 fn take_screenshot() -> Result<ScreenshotData, ()> {
     println!("taking screenshot...");
     //let disp = scrap::Display::primary().unwrap();
-    let disp = scrap::Display::all().unwrap()[0];
+    let disps = scrap::Display::all().unwrap();
+    let disp = disps[0];
 
     let mut cap = scrap::Capturer::new(disp).unwrap();
 
