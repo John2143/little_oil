@@ -696,7 +696,7 @@ fn sort_quad() {
 
     KeybdKey::LControlKey.press();
 
-    let mut movesleft = 60;
+    let mut movesleft = 25;
     for y in 0..24 {
         let ry = pys[y];
 
@@ -712,7 +712,7 @@ fn sort_quad() {
 
             if col1 == select_color || col2 == select_color || col3 == select_color || true {
                 click((rx + 10) as i32, (ry - 10) as i32);
-                std::thread::sleep(std::time::Duration::from_millis(delay - 10));
+                std::thread::sleep(std::time::Duration::from_millis(delay - 10 + 100));
                 movesleft -= 1;
             };
 
