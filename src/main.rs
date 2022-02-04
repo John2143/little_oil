@@ -597,7 +597,7 @@ fn take_screenshot() -> Result<ScreenshotData, ()> {
     let disps = scrap::Display::all().unwrap();
 
     let mut cap = scrap::Capturer::new(scrap::Display::primary().unwrap()).unwrap();
-    for disp in disps.into_iter().skip(1) {
+    for disp in disps.into_iter().skip(2) {
         cap = scrap::Capturer::new(disp).unwrap();
         println!("doing cap");
         break;
