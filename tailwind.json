@@ -1,0 +1,10 @@
+{
+  "item_name": "Stealth Boots",
+  "mods": [
+    {
+      "name": "tailwind",
+      "is_prefix": false
+    }
+  ],
+  "auto_aug_regal": false
+}

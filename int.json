@@ -1,0 +1,10 @@
+{
+  "item_name": "Opal Wand",
+  "mods": [
+    {
+      "name": "per 16",
+      "is_prefix": true
+    }
+  ],
+  "auto_aug_regal": false
+}

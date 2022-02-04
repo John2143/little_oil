@@ -3,6 +3,7 @@ use inputbot::KeybdKey;
 use inputbot::MouseButton;
 
 use rand::Rng;
+use regex::Regex;
 
 use std::io::{self, BufRead};
 
@@ -14,6 +15,7 @@ struct Settings {
     push_delay: u64,
     div_delay: u64,
     inv_colors: Option<Vec<u32>>,
+    screen_height: Option<u32>,
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct AutoRollMod {
@@ -46,6 +48,7 @@ static DEFAULT_SETTINGS: Settings = Settings {
     push_delay: 40,
     div_delay: 100,
     inv_colors: None,
+    screen_height: None,
 };
 
 static SETTINGS: Lazy<RwLock<Settings>> = Lazy::new(|| RwLock::new(DEFAULT_SETTINGS.clone()));
@@ -100,14 +103,25 @@ fn main() {
     *SETTINGS.write().unwrap() = set;
 
     println!("got config: {:?}", SETTINGS.read().unwrap());
+    let args: Vec<String> = std::env::args().skip(1).collect();
 
-    match std::env::args().skip(1).next().as_deref() {
+    match args.get(0).map(|x| &**x) {
         Some("sort") => {
             sort_quad();
             return;
         }
         Some("empty") => {
             empty_inv();
+            return;
+        }
+        Some("roll") => {
+            let file = args.get(1).expect("missing name to roll");
+            let times = args
+                .get(2)
+                .expect("missing number of times to roll")
+                .parse()
+                .expect("invalid number");
+            auto_roll(&file, times);
             return;
         }
         Some("reset_inv") => {
@@ -199,8 +213,11 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
 }
 
 fn read_item_on_cursor() -> String {
-    let mut ctx: ClipboardContext = clipboard::ClipboardProvider::new().unwrap();
-    ctx.set_contents("".into()).unwrap();
+    static mut ctx: Option<ClipboardContext> = None;
+
+    let safectx =
+        unsafe { ctx.get_or_insert_with(|| clipboard::ClipboardProvider::new().unwrap()) };
+    safectx.set_contents("".into()).unwrap();
 
     loop {
         KeybdKey::LControlKey.press();
@@ -210,7 +227,7 @@ fn read_item_on_cursor() -> String {
         KeybdKey::CKey.release();
         KeybdKey::LControlKey.release();
 
-        match ctx.get_contents() {
+        match safectx.get_contents() {
             Ok(s) => {
                 if s != "" {
                     return s;
@@ -265,20 +282,27 @@ fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
 
     let mut i = 0;
     let mut res;
+    println!("rolling!");
+    click(3, 3);
+    std::thread::sleep(std::time::Duration::from_millis(1000));
     loop {
         std::thread::sleep(std::time::Duration::from_millis(sleep_click));
         click_right(alt.0, alt.1);
-        std::thread::sleep(std::time::Duration::from_millis(sleep_click));
+        std::thread::sleep(std::time::Duration::from_millis(sleep_click * 2));
         click(slot.0, slot.1);
         std::thread::sleep(std::time::Duration::from_millis(sleep_read));
 
-        res = check_roll(&read_item_on_cursor(), &config);
+        println!("alt");
+        let item = read_item_on_cursor();
+        res = check_roll(&item, &config);
         if res.has_mod {
+            println!("got mod");
             break;
         }
 
         if (!res.has_prefix && config.needs_prefix()) || (!res.has_suffix && config.needs_suffix())
         {
+            println!("aug");
             std::thread::sleep(std::time::Duration::from_millis(sleep_click));
             click_right(aug.0, aug.1);
             std::thread::sleep(std::time::Duration::from_millis(sleep_click));
@@ -297,7 +321,7 @@ fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
             break;
         }
 
-        if KeybdKey::NumLockKey.is_toggled() {
+        if KeybdKey::RControlKey.is_pressed() {
             return Some(res);
         }
     }
@@ -475,12 +499,25 @@ fn reset_inv_colors() {
 }
 
 fn empty_inv_macro(start_slot: u32, delay: u64) {
-    //let inv_loc = (1311, 626);
-    //let inv_loc = (1713, 834);
-    let inv_loc = (1713, 834);
-    //let inv_loc = (20, 20);
-    //let inv_delta = 53;
-    let inv_delta = 70;
+    let settings = SETTINGS.read().unwrap();
+
+    let height = settings.screen_height.unwrap_or(1080);
+
+    let inv_loc = if height == 1080 {
+        (3190 - 1920, 640)
+    } else if height == 1440 {
+        (1713, 834)
+    } else {
+        panic!("invalid screen size");
+    };
+
+    let inv_delta = if height == 1080 {
+        53
+    } else if height == 1440 {
+        70
+    } else {
+        panic!("invalid screen size");
+    };
 
     let frame = match take_screenshot() {
         Ok(frame) => frame,
@@ -493,8 +530,6 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
         x.resize(60, 0);
         x
     };
-
-    let settings = SETTINGS.read().unwrap();
 
     let inv_color = settings.inv_colors.as_ref().unwrap_or(&default_colors);
 
@@ -594,7 +629,10 @@ impl ScreenshotData {
 }
 
 fn sort_quad() {
-    let delay = { SETTINGS.read().unwrap().pull_delay };
+    let (delay, height) = {
+        let settings = SETTINGS.read().unwrap();
+        (settings.pull_delay, settings.screen_height.unwrap_or(1080))
+    };
 
     let frame = match take_screenshot() {
         Ok(frame) => frame,
@@ -608,12 +646,36 @@ fn sort_quad() {
     //160, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581, 607,
     //634, 660, 686, 712, 739, 765, //792,
     //];
-    let left_edge = 29;
-    let px = 830 - 795;
-    let pys = [
-        260, 295, 330, 365, 400, 436, 471, 506, 541, 576, 611, 646, 681, 716, 751, 787, 822, 857,
-        892, 927, 962, 997, 1032, 1067,
-    ];
+    let left_edge = if height == 1080 {
+        15
+    } else if height == 1440 {
+        29
+    } else {
+        panic!("invalid screen size");
+    };
+
+    let px = if height == 1080 {
+        (2573 - 1920) / 24
+    } else if height == 1440 {
+        830 - 795
+    } else {
+        panic!("invalid screen size");
+    };
+
+    let pys = if height == 1080 {
+        [
+            160, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581,
+            607, 634, 660, 686, 712, 739, 765, //792,
+        ]
+    } else if height == 1440 {
+        [
+            260, 295, 330, 365, 400, 436, 471, 506, 541, 576, 611, 646, 681, 716, 751, 787, 822,
+            857, 892, 927, 962, 997, 1032, 1067,
+        ]
+    } else {
+        panic!("invalid screen size");
+    };
+
     //160, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581, 607,
     //634, 660, 686, 712, 739, 765, //792,
     //];
@@ -631,7 +693,8 @@ fn sort_quad() {
             let col2 = frame.get_pixel(rx + 7, ry);
             let col3 = frame.get_pixel(rx + 15, ry);
 
-            let select_color = 2008344320;
+            //let select_color = 2008344320;
+            let select_color = 2008344575;
 
             if col1 == select_color || col2 == select_color || col3 == select_color {
                 click((rx + 10) as i32, (ry - 10) as i32);
