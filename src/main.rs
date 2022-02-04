@@ -470,7 +470,7 @@ fn reset_inv_colors() {
     let height = settings.screen_height.unwrap_or(1080);
 
     let inv_loc = if height == 1080 {
-        (1311, 626);
+        (1311, 626)
     } else if height == 1440 {
         (1713, 834)
     } else {
@@ -517,7 +517,7 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
     let height = settings.screen_height.unwrap_or(1080);
 
     let inv_loc = if height == 1080 {
-        (1311, 626);
+        (1311, 626)
     } else if height == 1440 {
         (1713, 834)
     } else {
