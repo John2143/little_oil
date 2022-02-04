@@ -735,8 +735,8 @@ fn sort_quad() {
     image::save_buffer(
         "./image.png",
         &frame.pixels,
-        frame.width,
-        frame.height,
+        frame.width.try_into().unwrap(),
+        frame.height.try_into().unwrap(),
         image::ColorType::Rgba8,
     )
     .unwrap();
