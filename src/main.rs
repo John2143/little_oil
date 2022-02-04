@@ -504,6 +504,8 @@ fn reset_inv_colors() {
         }
     }
 
+    drop(settings);
+
     let mut settings = SETTINGS.write().unwrap();
 
     settings.inv_colors = Some(colors);
