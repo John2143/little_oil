@@ -710,7 +710,7 @@ fn sort_quad() {
             //let select_color = 2008344320;
             let select_color = 2008344575;
 
-            if col1 == select_color || col2 == select_color || col3 == select_color || true {
+            if col1 == select_color || col2 == select_color || col3 == select_color {
                 click((rx + 10) as i32, (ry - 10) as i32);
                 std::thread::sleep(std::time::Duration::from_millis(delay - 10 + 100));
                 movesleft -= 1;
