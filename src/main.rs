@@ -724,9 +724,10 @@ fn sort_quad() {
             //movesleft--;
             //}
             //img.setPixelColor(Jimp.cssColorToHex("#FFFFFF"), rx, ry);
-        }
-        if movesleft < 1 {
-            break;
+
+            if movesleft < 1 {
+                break;
+            }
         }
     }
 
