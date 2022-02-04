@@ -592,6 +592,7 @@ struct ScreenshotData {
 }
 
 fn take_screenshot() -> Result<ScreenshotData, ()> {
+    println!("taking screenshot...");
     let disp = scrap::Display::primary().unwrap();
     let mut cap = scrap::Capturer::new(disp).unwrap();
     let width = cap.width();
@@ -601,6 +602,8 @@ fn take_screenshot() -> Result<ScreenshotData, ()> {
 
     //max 2 seconds before fail
     let maxloops = 2000 / sleep;
+
+    println!("trying to screenshot...");
 
     for _ in 0..maxloops {
         match cap.frame() {
