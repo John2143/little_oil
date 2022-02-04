@@ -1,4 +1,3 @@
-//extern crate image;
 use inputbot::KeybdKey;
 use inputbot::MouseButton;
 
@@ -733,5 +732,5 @@ fn sort_quad() {
 
     KeybdKey::LControlKey.release();
 
-    //image::save_buffer("./image.png", &frame, 1920, 1080, image::ColorType::Rgba8).unwrap();
+    image::save_buffer("./image.png", &frame, 1920, 1080, image::ColorType::Rgba8).unwrap();
 }
