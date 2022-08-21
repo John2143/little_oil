@@ -592,6 +592,7 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
 
                 //println!("clicking {} {}", rx, ry);
 
+                std::thread::sleep(std::time::Duration::from_millis(delay + 20));
                 click(rx, ry);
                 std::thread::sleep(std::time::Duration::from_millis(delay));
             }
