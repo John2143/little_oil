@@ -592,9 +592,11 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
 
                 //println!("clicking {} {}", rx, ry);
 
+                KeybdKey::LControlKey.press();
                 std::thread::sleep(std::time::Duration::from_millis(delay + 20));
                 click(rx, ry);
                 std::thread::sleep(std::time::Duration::from_millis(delay));
+                KeybdKey::LControlKey.release();
             }
         }
     }
@@ -609,11 +611,9 @@ fn empty_inv() {
     //let slot = if KeybdKey::NumLockKey.is_toggled() { 5 } else { 0 };
     let slot = 0;
 
-    KeybdKey::LControlKey.press();
     empty_inv_macro(slot, delay);
     //std::thread::sleep(std::time::Duration::from_millis(delay * 2));
     //empty_inv_macro(slot, delay);
-    KeybdKey::LControlKey.release();
 }
 
 struct ScreenshotData {
