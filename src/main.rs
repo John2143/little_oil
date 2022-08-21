@@ -470,11 +470,13 @@ fn command_line() {
 }
 
 fn click(x: i32, y: i32) {
+    let mouse = mouse_rs::Mouse::new();
+    use mouse_rs::types::keys::Keys;
     move_mouse(x, y);
     std::thread::sleep(std::time::Duration::from_millis(30));
-    MouseButton::LeftButton.press();
+    mouse.press(&Keys::LEFT).expect("failed to click D:");
     std::thread::sleep(std::time::Duration::from_millis(10));
-    MouseButton::LeftButton.release();
+    mouse.release(&Keys::LEFT).expect("failed to click D:");
 }
 
 fn click_right(x: i32, y: i32) {
@@ -590,15 +592,8 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
                     (y * inv_delta + inv_loc.1) as i32,
                 );
 
-                for i in 0..10 {
-                    println!("clicking {} {}", rx, ry);
-                    move_mouse(rx, ry);
-                    MouseButton::LeftButton.press();
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                    MouseButton::LeftButton.release();
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-                return;
+                println!("clicking {} {}", rx, ry);
+                click(rx, ry);
             }
         }
     }
