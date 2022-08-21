@@ -590,11 +590,9 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
                     (y * inv_delta + inv_loc.1) as i32,
                 );
 
-                //println!("clicking {} {}", rx, ry);
-
-                move_mouse(rx, ry);
-
                 for i in 0..10 {
+                    println!("clicking {} {}", rx, ry);
+                    move_mouse(rx, ry);
                     KeybdKey::LControlKey.press();
                     std::thread::sleep(std::time::Duration::from_millis(50));
                     MouseButton::LeftButton.press();
