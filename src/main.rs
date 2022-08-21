@@ -592,13 +592,19 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
 
                 //println!("clicking {} {}", rx, ry);
 
-                KeybdKey::LControlKey.press();
-                std::thread::sleep(std::time::Duration::from_millis(delay + 20));
                 move_mouse(rx, ry);
-                //click(rx, ry);
+
+                for i in 0..10 {
+                    KeybdKey::LControlKey.press();
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    MouseButton::LeftButton.press();
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    MouseButton::LeftButton.release();
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    KeybdKey::LControlKey.release();
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
                 return;
-                std::thread::sleep(std::time::Duration::from_millis(delay));
-                //KeybdKey::LControlKey.release();
             }
         }
     }
