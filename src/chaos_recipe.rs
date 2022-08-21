@@ -5,7 +5,34 @@ pub struct ChaosRecipe {
     session_id: String,
     account_name: String,
     league: String,
-    tab_index: usize,
+    tab_name: String,
+    tab_index: Option<usize>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+struct Color {
+    r: usize,
+    g: usize,
+    b: usize,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+struct StashTabAPIResult {
+    num_tabs: usize,
+    tabs: Vec<StashTab>,
+    items: Vec<Item>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+struct StashTab {
+    n: String,
+    i: usize,
+    id: String,
+    colour: Color,
 }
 
 #[allow(dead_code)]
@@ -13,8 +40,10 @@ pub struct ChaosRecipe {
 #[serde(rename_all = "camelCase")]
 struct StashAPIResult {
     num_tabs: usize,
+    #[serde(default)]
     quad_layout: bool,
     items: Vec<Item>,
+    tabs: Vec<StashTab>,
 }
 
 #[allow(dead_code)]
@@ -31,6 +60,8 @@ struct Item {
     w: usize,
     h: usize,
     properties: Option<Vec<serde_json::Value>>,
+    #[serde(default)]
+    used: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,11 +164,24 @@ impl Item {
 
 impl ChaosRecipe {
     fn get_url(&self) -> String {
+        //let u = format!(
+        //"https://www.pathofexile.com/character-window/get-stash-items?accountName={}&realm=pc&league={}&tabs=1&tabIndex={}",
+        //self.account_name,
+        //self.league,
+        //self.tab_index,
+        //);
+        //let d = ureq::get(&u)
+        //.set("Accept", "application/json")
+        //.set("Cookie", &format!("POESESSID={}", self.session_id))
+        //.call();
+
+        //dbg!(d.unwrap().into_string());
+
         format!(
-            "https://www.pathofexile.com/character-window/get-stash-items?accountName={}&realm=pc&league={}&tabs=0&tabIndex={}",
+            "https://www.pathofexile.com/character-window/get-stash-items?accountName={}&realm=pc&league={}&tabs=1&tabIndex={}",
             self.account_name,
             self.league,
-            self.tab_index,
+            self.tab_index.unwrap_or(0),
         )
     }
 
@@ -147,7 +191,30 @@ impl ChaosRecipe {
             .set("Cookie", &format!("POESESSID={}", self.session_id))
             .call();
 
+        //let apir2 = d.unwrap().into_string().unwrap();
+        //dbg!(apir2);
         let apir: StashAPIResult = d.unwrap().into_json().unwrap();
+
+        for tab in &apir.tabs {
+            if Some(tab.i) == self.tab_index {
+                println!("Chaos recipe tab name is {}", tab.n);
+                println!("Config file name is {}", self.tab_name);
+            } else if tab.n == self.tab_name {
+                println!("closest ID is {}, {}", tab.n, tab.i);
+                let mut settings = crate::SETTINGS.write().unwrap();
+                settings
+                    .chaos_recipe_settings
+                    .as_mut()
+                    .map(|s| s.tab_index = Some(tab.i));
+                crate::save_config(crate::CONFIG_PATH, &*settings).unwrap();
+                println!("writing config {:?}", settings);
+
+                let mut newc = self.clone();
+                newc.tab_index = Some(tab.i);
+                //TODO safety
+                return newc.get_json();
+            }
+        }
 
         apir
     }
@@ -169,16 +236,21 @@ struct ItemList<'a> {
 }
 
 impl StashAPIResult {
-    fn create_item_list(&self) -> ItemList {
+    fn create_item_list(&mut self) -> ItemList {
         let mut il = ItemList::default();
-        for item in &self.items {
+        for item in self.items.iter_mut() {
             let ty = item.get_category();
             if ty == ItemType::Unknown {
                 continue;
             }
 
+            if item.used {
+                continue;
+            }
+
+            item.used = true;
             if ty == ItemType::Weapon && il.weapon1.is_none() {
-                il.weapon1 = Some(item);
+                il.weapon1 = Some(&*item);
                 continue;
             }
 
@@ -223,6 +295,8 @@ impl StashAPIResult {
                 il.body = Some(item);
                 continue;
             }
+
+            item.used = false;
         }
 
         il
@@ -302,26 +376,21 @@ impl ItemList<'_> {
         let click_quad = |x: usize, y: usize| {
             let ry = pys[y];
             let rx = x * px + left_edge;
-            std::thread::sleep(std::time::Duration::from_millis(delay - 10));
-            std::thread::sleep(std::time::Duration::from_millis(delay - 10));
-            std::thread::sleep(std::time::Duration::from_millis(delay - 10));
             crate::click((rx + 10) as i32, (ry - 10) as i32);
-            std::thread::sleep(std::time::Duration::from_millis(delay - 10));
-            std::thread::sleep(std::time::Duration::from_millis(delay - 10));
-            std::thread::sleep(std::time::Duration::from_millis(delay - 10));
+            std::thread::sleep(std::time::Duration::from_millis(delay + 10));
         };
 
         let clicks = [
-            ("Weapon A", self.weapon1),
-            ("Weapon B", self.weapon2),
-            ("Ring 1", self.ring1),
-            ("Ring 2", self.ring2),
             ("Body", self.body),
             ("Helmet", self.helmet),
             ("Boots", self.boots),
             ("Gloves", self.gloves),
-            ("Amulet", self.amulet),
             ("Belt", self.belt),
+            ("Weapon A", self.weapon1),
+            ("Weapon B", self.weapon2),
+            ("Ring 1", self.ring1),
+            ("Ring 2", self.ring2),
+            ("Amulet", self.amulet),
         ];
 
         use inputbot::KeybdKey;
@@ -350,10 +419,12 @@ pub fn get_tally(cr_config: &ChaosRecipe) {
     println!("Total item counts: {:?}", apir.tally());
 }
 
-pub fn do_recipe(cr_config: &ChaosRecipe) {
-    let apir = cr_config.get_json();
-    let item_list = apir.create_item_list();
-    item_list.take();
+pub fn do_recipe(cr_config: &ChaosRecipe, amt: usize) {
+    let mut apir = cr_config.get_json();
+    for i in 0..amt {
+        let item_list = apir.create_item_list();
+        item_list.take();
+    }
 }
 
 //curl 'https://www.pathofexile.com/character-window/get-stash-items

@@ -56,7 +56,7 @@ static SETTINGS: Lazy<RwLock<Settings>> = Lazy::new(|| RwLock::new(DEFAULT_SETTI
 
 static CONFIG_PATH: &str = "./config.json";
 
-fn save_config<T: Serialize>(path: &str, set: &T) -> Result<(), std::io::Error> {
+pub fn save_config<T: Serialize>(path: &str, set: &T) -> Result<(), std::io::Error> {
     let mut file = fs::File::create(&path)?;
     file.write_all(serde_json::to_string_pretty(&set).unwrap().as_bytes())?;
 
@@ -139,20 +139,28 @@ fn main() {
         }
         Some("tally") => {
             let settings = SETTINGS.read().unwrap();
-            let c = match settings.chaos_recipe_settings.as_ref() {
+            let c = match settings.chaos_recipe_settings.clone() {
                 Some(s) => s,
                 None => {
                     println!("No chaos recipe config found");
                     return;
                 }
             };
+
+            drop(settings);
 
             chaos_recipe::get_tally(&c);
             return;
         }
         Some("chaos") => {
+            let amt: usize = args
+                .get(1)
+                .unwrap_or(&"1".to_string())
+                .parse()
+                .expect("Invalid number of recipes, try 1 or 2");
+
             let settings = SETTINGS.read().unwrap();
-            let c = match settings.chaos_recipe_settings.as_ref() {
+            let c = match settings.chaos_recipe_settings.clone() {
                 Some(s) => s,
                 None => {
                     println!("No chaos recipe config found");
@@ -160,7 +168,9 @@ fn main() {
                 }
             };
 
-            chaos_recipe::do_recipe(&c);
+            drop(settings);
+
+            chaos_recipe::do_recipe(&c, amt);
             return;
         }
         Some(n) => {
