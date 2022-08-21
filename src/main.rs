@@ -594,9 +594,11 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
 
                 KeybdKey::LControlKey.press();
                 std::thread::sleep(std::time::Duration::from_millis(delay + 20));
-                click(rx, ry);
+                move_mouse(rx, ry);
+                //click(rx, ry);
+                return;
                 std::thread::sleep(std::time::Duration::from_millis(delay));
-                KeybdKey::LControlKey.release();
+                //KeybdKey::LControlKey.release();
             }
         }
     }
