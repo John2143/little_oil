@@ -577,6 +577,7 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
 
     let inv_color = settings.inv_colors.as_ref().unwrap_or(&default_colors);
 
+    KeybdKey::LControlKey.press();
     for x in (start_slot / 5)..12 {
         for y in (start_slot % 5)..5 {
             let mousex = x * inv_delta + inv_loc.0;
@@ -594,9 +595,11 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
 
                 println!("clicking {} {}", rx, ry);
                 click(rx, ry);
+                std::thread::sleep(std::time::Duration::from_millis(delay));
             }
         }
     }
+    KeybdKey::LControlKey.release();
 
     //move_mouse(655, 801);
 }
