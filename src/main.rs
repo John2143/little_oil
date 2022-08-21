@@ -1,9 +1,5 @@
-//extern crate image;
 use inputbot::KeybdKey;
 use inputbot::MouseButton;
-
-use rand::Rng;
-use regex::Regex;
 
 use std::io::{self, BufRead};
 
@@ -244,10 +240,10 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
 }
 
 fn read_item_on_cursor() -> String {
-    static mut ctx: Option<ClipboardContext> = None;
+    static mut CTX: Option<ClipboardContext> = None;
 
     let safectx =
-        unsafe { ctx.get_or_insert_with(|| clipboard::ClipboardProvider::new().unwrap()) };
+        unsafe { CTX.get_or_insert_with(|| clipboard::ClipboardProvider::new().unwrap()) };
     safectx.set_contents("".into()).unwrap();
 
     loop {
@@ -626,8 +622,16 @@ struct ScreenshotData {
 }
 
 fn take_screenshot() -> Result<ScreenshotData, ()> {
+    println!("taking screenshot...");
     let disp = scrap::Display::primary().unwrap();
+    //let disps = scrap::Display::all().unwrap();
     let mut cap = scrap::Capturer::new(disp).unwrap();
+    //for disp in disps.into_iter().skip(2) {
+    //cap = scrap::Capturer::new(disp).unwrap();
+    //println!("doing cap");
+    //break;
+    //}
+
     let width = cap.width();
     let height = cap.height();
 
@@ -636,16 +640,21 @@ fn take_screenshot() -> Result<ScreenshotData, ()> {
     //max 2 seconds before fail
     let maxloops = 2000 / sleep;
 
+    println!("trying to screenshot...");
+
     for _ in 0..maxloops {
         match cap.frame() {
             Ok(fr) => {
+                println!("got screenshot");
                 return Ok(ScreenshotData {
                     height,
                     width,
                     pixels: fr.to_vec(),
                 });
             }
-            Err(_) => {}
+            Err(e) => {
+                println!("screenshot failed... {}", e);
+            }
         }
         std::thread::sleep(std::time::Duration::from_millis(sleep));
     }
@@ -701,7 +710,7 @@ fn sort_quad() {
     };
 
     let px = if height == 1080 {
-        (2573 - 1920) / 24
+        (2573 - 1920 - 15) / 24
     } else if height == 1440 {
         830 - 795
     } else {
@@ -742,9 +751,9 @@ fn sort_quad() {
             //let select_color = 2008344320;
             let select_color = 2008344575;
 
-            if col1 == select_color || col2 == select_color || col3 == select_color || true {
+            if col1 == select_color || col2 == select_color || col3 == select_color {
                 click((rx + 10) as i32, (ry - 10) as i32);
-                std::thread::sleep(std::time::Duration::from_millis(delay - 10));
+                std::thread::sleep(std::time::Duration::from_millis(delay - 10 + 100));
                 movesleft -= 1;
             };
 
@@ -756,13 +765,22 @@ fn sort_quad() {
             //movesleft--;
             //}
             //img.setPixelColor(Jimp.cssColorToHex("#FFFFFF"), rx, ry);
-        }
-        if movesleft < 1 {
-            break;
+
+            if movesleft < 1 {
+                break;
+            }
         }
     }
 
     KeybdKey::LControlKey.release();
 
-    //image::save_buffer("./image.png", &frame, 1920, 1080, image::ColorType::Rgba8).unwrap();
+    //use std::convert::TryInto;
+    //image::save_buffer(
+    //"./image2.png",
+    //&frame.pixels,
+    //frame.width.try_into().unwrap(),
+    //frame.height.try_into().unwrap(),
+    //image::ColorType::Rgba8,
+    //)
+    //.unwrap();
 }

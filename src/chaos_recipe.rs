@@ -8,6 +8,7 @@ pub struct ChaosRecipe {
     tab_index: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 struct StashAPIResult {
@@ -16,6 +17,7 @@ struct StashAPIResult {
     items: Vec<Item>,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 struct Item {
