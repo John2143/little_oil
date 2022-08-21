@@ -9,8 +9,12 @@ use std::io::{self, BufRead};
 
 use serde::{Deserialize, Serialize};
 
+mod chaos_recipe;
+mod dicts;
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct Settings {
+pub struct Settings {
+    chaos_recipe_settings: Option<chaos_recipe::ChaosRecipe>,
     pull_delay: u64,
     push_delay: u64,
     div_delay: u64,
@@ -44,6 +48,7 @@ use std::fs;
 use std::io::{Read, Write};
 
 static DEFAULT_SETTINGS: Settings = Settings {
+    chaos_recipe_settings: None,
     pull_delay: 50,
     push_delay: 40,
     div_delay: 100,
@@ -102,7 +107,7 @@ fn main() {
 
     *SETTINGS.write().unwrap() = set;
 
-    println!("got config: {:?}", SETTINGS.read().unwrap());
+    //println!("got config: {:?}", SETTINGS.read().unwrap());
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     match args.get(0).map(|x| &**x) {
@@ -134,6 +139,32 @@ fn main() {
         }
         Some("get") => {
             move_mouse(1920 + 100, 100);
+            return;
+        }
+        Some("tally") => {
+            let settings = SETTINGS.read().unwrap();
+            let c = match settings.chaos_recipe_settings.as_ref() {
+                Some(s) => s,
+                None => {
+                    println!("No chaos recipe config found");
+                    return;
+                }
+            };
+
+            chaos_recipe::get_tally(&c);
+            return;
+        }
+        Some("chaos") => {
+            let settings = SETTINGS.read().unwrap();
+            let c = match settings.chaos_recipe_settings.as_ref() {
+                Some(s) => s,
+                None => {
+                    println!("No chaos recipe config found");
+                    return;
+                }
+            };
+
+            chaos_recipe::do_recipe(&c);
             return;
         }
         Some(n) => {
@@ -468,6 +499,7 @@ use std::sync::RwLock;
 fn reset_inv_colors() {
     let settings = SETTINGS.read().unwrap();
     let height = settings.screen_height.unwrap_or(1080);
+    drop(settings);
 
     let inv_loc = if height == 1080 {
         (1311, 626)
@@ -508,6 +540,7 @@ fn reset_inv_colors() {
     let mut settings = SETTINGS.write().unwrap();
 
     settings.inv_colors = Some(colors);
+    dbg!("ok");
 
     save_config(CONFIG_PATH, &*settings).unwrap();
 }
