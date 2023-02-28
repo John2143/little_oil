@@ -1,0 +1,14 @@
+{
+  "item_name": "Large Cluster Jewel",
+  "mods": [
+    {
+      "name": "doryani",
+      "is_prefix": true
+    },
+    {
+      "name": "sadist",
+      "is_prefix": false
+    }
+  ],
+  "auto_aug_regal": false
+}

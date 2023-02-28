@@ -1,0 +1,22 @@
+{
+  "item_name": "Crimson Jewel",
+  "mods": [
+    {
+      "name": "attack speed with wands",
+      "is_prefix": true
+    },
+    {
+      "name": "maximum life",
+      "is_prefix": true
+    },
+    {
+      "name": "global physical damage",
+      "is_prefix": true
+    },
+    {
+      "name": "attack speed while holding a shield",
+      "is_prefix": true
+    }
+  ],
+  "auto_aug_regal": true
+}
