@@ -54,7 +54,7 @@ static DEFAULT_SETTINGS: Settings = Settings {
 
 static SETTINGS: Lazy<RwLock<Settings>> = Lazy::new(|| RwLock::new(DEFAULT_SETTINGS.clone()));
 
-static CONFIG_PATH: &str = "./config.json";
+static CONFIG_PATH: &str = "/home/john/little_oil/config.json";
 
 pub fn save_config<T: Serialize>(path: &str, set: &T) -> Result<(), std::io::Error> {
     let mut file = fs::File::create(&path)?;
@@ -108,7 +108,13 @@ fn main() {
 
     match args.get(0).map(|x| &**x) {
         Some("sort") => {
-            sort_quad();
+            let times = args
+                .get(1)
+                .map(|x| x.parse())
+                .unwrap_or(Ok(40))
+                .expect("invalid number");
+
+            sort_quad(times);
             return;
         }
         Some("empty") => {
@@ -184,15 +190,12 @@ fn main() {
     println!("starting in inputbot mode");
 
     KeybdKey::HomeKey.bind(move || {
-        sort_quad();
+        sort_quad(40);
     });
     KeybdKey::AKey.bind(move || {
         empty_inv();
     });
-    KeybdKey::RControlKey.bind(move || {
-        println!("Resetting inv colors");
-        reset_inv_colors();
-    });
+
     KeybdKey::F7Key.bind(move || {
         chance();
     });
@@ -238,6 +241,8 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
         .nth(0)
         .unwrap();
 
+    dbg!(&item_text.lines().collect::<Vec<_>>()[8..]);
+
     RollResult {
         has_prefix: !maybe_name.starts_with(&config.item_name),
         has_suffix: !maybe_name.ends_with(&config.item_name),
@@ -257,12 +262,10 @@ fn read_item_on_cursor() -> String {
     safectx.set_contents("".into()).unwrap();
 
     loop {
-        KeybdKey::LControlKey.press();
         std::thread::sleep(std::time::Duration::from_millis(5));
         KeybdKey::CKey.press();
         std::thread::sleep(std::time::Duration::from_millis(5));
         KeybdKey::CKey.release();
-        KeybdKey::LControlKey.release();
 
         match safectx.get_contents() {
             Ok(s) => {
@@ -479,20 +482,32 @@ fn command_line() {
     }
 }
 
+thread_local!(static MOUSE: Lazy<mouse_rs::Mouse> = Lazy::new(|| mouse_rs::Mouse::new()));
+
 fn click(x: i32, y: i32) {
-    move_mouse(x, y);
-    std::thread::sleep(std::time::Duration::from_millis(30));
-    MouseButton::LeftButton.press();
-    std::thread::sleep(std::time::Duration::from_millis(10));
-    MouseButton::LeftButton.release();
+    MOUSE.with(|mouse| {
+        use mouse_rs::types::keys::Keys;
+        move_mouse(x, y);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        mouse.press(&Keys::LEFT).expect("failed to click D:");
+        //MouseButton::LeftButton.press();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        mouse.release(&Keys::LEFT).expect("failed to click D:");
+        //MouseButton::LeftButton.release();
+    })
 }
 
 fn click_right(x: i32, y: i32) {
-    move_mouse(x, y);
-    std::thread::sleep(std::time::Duration::from_millis(30));
-    MouseButton::RightButton.press();
-    std::thread::sleep(std::time::Duration::from_millis(10));
-    MouseButton::RightButton.release();
+    MOUSE.with(|mouse| {
+        use mouse_rs::types::keys::Keys;
+        move_mouse(x, y);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        mouse.press(&Keys::RIGHT).expect("failed to click D:");
+        //MouseButton::LeftButton.press();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        mouse.release(&Keys::RIGHT).expect("failed to click D:");
+        //MouseButton::LeftButton.release();
+    })
 }
 
 fn move_mouse(x: i32, y: i32) {
@@ -618,11 +633,9 @@ fn empty_inv() {
     //let slot = if KeybdKey::NumLockKey.is_toggled() { 5 } else { 0 };
     let slot = 0;
 
-    KeybdKey::LControlKey.press();
+    std::thread::sleep(std::time::Duration::from_millis(500));
     empty_inv_macro(slot, delay);
-    //std::thread::sleep(std::time::Duration::from_millis(delay * 2));
     //empty_inv_macro(slot, delay);
-    KeybdKey::LControlKey.release();
 }
 
 struct ScreenshotData {
@@ -693,7 +706,9 @@ impl ScreenshotData {
     }
 }
 
-fn sort_quad() {
+fn sort_quad(times: u32) {
+    std::thread::sleep(std::time::Duration::from_millis(1000));
+
     let (delay, height) = {
         let settings = SETTINGS.read().unwrap();
         (settings.pull_delay, settings.screen_height.unwrap_or(1080))
@@ -745,13 +760,16 @@ fn sort_quad() {
     //634, 660, 686, 712, 739, 765, //792,
     //];
 
-    KeybdKey::LControlKey.press();
-
-    let mut movesleft = 60;
+    let mut movesleft = times;
     for y in 0..24 {
         let ry = pys[y];
 
         for x in 0..24 {
+            dbg!(&movesleft);
+            if movesleft < 1 {
+                break;
+            }
+
             let rx = x * px + left_edge;
 
             let col1 = frame.get_pixel(rx, ry);
@@ -763,7 +781,7 @@ fn sort_quad() {
 
             if col1 == select_color || col2 == select_color || col3 == select_color {
                 click((rx + 10) as i32, (ry - 10) as i32);
-                std::thread::sleep(std::time::Duration::from_millis(delay - 10 + 100));
+                std::thread::sleep(std::time::Duration::from_millis(delay - 10));
                 movesleft -= 1;
             };
 
@@ -775,14 +793,8 @@ fn sort_quad() {
             //movesleft--;
             //}
             //img.setPixelColor(Jimp.cssColorToHex("#FFFFFF"), rx, ry);
-
-            if movesleft < 1 {
-                break;
-            }
         }
     }
-
-    KeybdKey::LControlKey.release();
 
     //use std::convert::TryInto;
     //image::save_buffer(
