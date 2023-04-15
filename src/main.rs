@@ -578,6 +578,8 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
         (1311, 626)
     } else if height == 1440 {
         (1713, 834)
+    } else if height == 1000 {
+        (1915, 591)
     } else {
         panic!("invalid screen size");
     };
@@ -586,6 +588,8 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
         53
     } else if height == 1440 {
         70
+    } else if height == 1000 {
+        54
     } else {
         panic!("invalid screen size");
     };
