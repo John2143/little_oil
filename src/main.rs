@@ -54,7 +54,7 @@ static DEFAULT_SETTINGS: Settings = Settings {
 
 static SETTINGS: Lazy<RwLock<Settings>> = Lazy::new(|| RwLock::new(DEFAULT_SETTINGS.clone()));
 
-static CONFIG_PATH: &str = "/home/john/little_oil/config.json";
+static CONFIG_PATH: &str = "/home/ryann/little_oil/config.json";
 
 pub fn save_config<T: Serialize>(path: &str, set: &T) -> Result<(), std::io::Error> {
     let mut file = fs::File::create(&path)?;
