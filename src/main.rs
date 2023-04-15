@@ -526,6 +526,8 @@ fn reset_inv_colors() {
         (1311, 626)
     } else if height == 1440 {
         (1713, 834)
+    } else if height == 1000 {
+        (1915, 591)
     } else {
         panic!("invalid screen size");
     };
@@ -534,6 +536,8 @@ fn reset_inv_colors() {
         53
     } else if height == 1440 {
         70
+    } else if height == 1000 {
+        54
     } else {
         panic!("invalid screen size");
     };
