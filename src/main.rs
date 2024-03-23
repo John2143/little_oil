@@ -1,5 +1,4 @@
 use inputbot::KeybdKey;
-use inputbot::MouseButton;
 
 use std::io::{self, BufRead};
 
