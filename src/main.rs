@@ -54,7 +54,7 @@ static DEFAULT_SETTINGS: Settings = Settings {
 
 static SETTINGS: Lazy<RwLock<Settings>> = Lazy::new(|| RwLock::new(DEFAULT_SETTINGS.clone()));
 
-static CONFIG_PATH: &str = "/home/ryann/little_oil/config.json";
+static CONFIG_PATH: &str = "/home/john/little_oil/config.json";
 
 pub fn save_config<T: Serialize>(path: &str, set: &T) -> Result<(), std::io::Error> {
     let mut file = fs::File::create(&path)?;
@@ -108,6 +108,7 @@ fn main() {
 
     match args.get(0).map(|x| &**x) {
         Some("sort") => {
+            dbg!(&args);
             let times = args
                 .get(1)
                 .map(|x| x.parse())
@@ -511,7 +512,7 @@ fn click_right(x: i32, y: i32) {
 }
 
 fn move_mouse(x: i32, y: i32) {
-    inputbot::MouseCursor::move_abs(x + 1920, y);
+    inputbot::MouseCursor::move_abs(x, y);
 }
 
 use once_cell::sync::Lazy;
@@ -715,7 +716,7 @@ impl ScreenshotData {
 }
 
 fn sort_quad(times: u32) {
-    std::thread::sleep(std::time::Duration::from_millis(1000));
+    std::thread::sleep(std::time::Duration::from_millis(300));
 
     let (delay, height) = {
         let settings = SETTINGS.read().unwrap();
