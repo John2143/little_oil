@@ -122,7 +122,7 @@ enum ItemParseSections {
 impl<'a> Item<'a> {
     fn from_str(source: &'a str) -> anyhow::Result<Self> {
         let span = span!(tracing::Level::DEBUG, "Item Parser");
-        span.enter();
+        let _ = span.enter();
         let mut cur_parser_state = ItemParseSections::ItemClass;
 
         let mut item_type = None;
@@ -221,7 +221,7 @@ impl<'a> Item<'a> {
 
         }
 
-        //let item_name = match item_name
+        // TODO
         let item = Item {
             base_name: "",
             item_name: ItemName::Normal,
@@ -231,6 +231,22 @@ impl<'a> Item<'a> {
             mods
         };
         Ok(item)
+    }
+
+    pub fn num_mods(&self) -> (usize, usize) {
+        let mut prefixes = 0;
+        let mut suffixes = 0;
+
+        for mo in &self.mods {
+            match mo.affix_type {
+                AffixType::Prefix => prefixes += 1,
+                AffixType::Suffix => suffixes += 1,
+                AffixType::Implicit => {},
+                AffixType::Unique => {},
+            }
+        }
+
+        (prefixes, suffixes)
     }
 }
 
@@ -393,18 +409,19 @@ mod test {
     #[test]
     fn all_item_mod_integration_tests() {
         let item_texts = [
-            include_str!("../tests/example_items/amulet.txt"),
-            include_str!("../tests/example_items/unique.txt"),
-            include_str!("../tests/example_items/magic_helm.txt"),
+            (1, 3, include_str!("../tests/example_items/amulet.txt")),
+            (0, 0, include_str!("../tests/example_items/unique.txt")),
+            (1, 1, include_str!("../tests/example_items/magic_helm.txt")),
         ];
 
-        for text in item_texts {
+        for (num_pre, num_suf, text) in item_texts {
             let text = text.trim();
 
             let t = Item::from_str(text).unwrap();
-            dbg!(t);
+            let (np, ns) = t.num_mods();
+            assert_eq!(num_pre, np);
+            assert_eq!(num_suf, ns);
         }
-        panic!();
     }
 
     #[traced_test]
