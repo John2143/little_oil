@@ -4,12 +4,12 @@ use anyhow::Context;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use rust_decimal::Decimal;
-use tracing::{debug, trace};
+use tracing::{debug, span, trace};
 
 #[derive(Debug)]
 pub struct Item<'a> {
     pub base_name: &'a str,
-    pub item_name: ItemName<'a>,
+    pub item_name: ItemName,
 
     pub stats: Vec<StatLine<'a>>,
 
@@ -26,24 +26,24 @@ pub struct StatLine<'a> {
 }
 
 #[derive(Debug)]
-pub enum ItemName<'a> {
+pub enum ItemName {
     /// Gems, etc
-    Other(&'a str),
+    Other(String),
     Normal,
     Magic {
-        prefix: &'a str,
-        suffix: &'a str,
+        prefix: String,
+        suffix: String,
     },
-    Rare(&'a str),
-    Unique(&'a str),
+    Rare(String),
+    Unique(String),
 }
 
-impl<'a> Display for ItemName<'a> {
+impl<'a> Display for ItemName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ItemName::Other(name) => write!(f, "?: {name}")?,
             ItemName::Normal => write!(f, "N")?,
-            ItemName::Magic { prefix, suffix } => match (*prefix, *suffix) {
+            ItemName::Magic { prefix, suffix } => match (prefix.as_ref(), suffix.as_ref()) {
                 ("", suffix) => {
                     write!(f, "M(s): {suffix}")?;
                 }
@@ -52,8 +52,7 @@ impl<'a> Display for ItemName<'a> {
                 }
                 (prefix, suffix) => {
                     write!(f, "M(p+s): {prefix} : {suffix}")?;
-                }
-            },
+                } },
             ItemName::Rare(name) => write!(f, "R: {name}")?,
             ItemName::Unique(name) => write!(f, "U: {name}")?,
         };
@@ -84,6 +83,7 @@ pub struct ItemMod<'a> {
 pub enum AffixType {
     Prefix,
     Suffix,
+    Implicit,
     Unique,
 }
 
@@ -120,13 +120,18 @@ enum ItemParseSections {
 }
 
 impl<'a> Item<'a> {
-    #[tracing::instrument]
     fn from_str(source: &'a str) -> anyhow::Result<Self> {
-        let cur_parser_state = ItemParseSections::ItemClass;
+        let span = span!(tracing::Level::DEBUG, "Item Parser");
+        span.enter();
+        let mut cur_parser_state = ItemParseSections::ItemClass;
+
+        let mut item_type = None;
+        let mut item_name = String::new();
 
         let mut current_parsed_modline = None;
         let mut mods = vec![];
-        for line in source.trim().lines() {
+        let mut line_iterator = source.trim().lines().peekable();
+        while let Some(line) = line_iterator.next() {
             let line = line.trim();
 
             match cur_parser_state {
@@ -142,33 +147,90 @@ impl<'a> Item<'a> {
                             .as_str(),
                         "Item Class"
                     );
+
+                    item_type = Some(res.name("right").unwrap());
+
+                    debug!(?item_type);
+                    cur_parser_state = ItemParseSections::ItemRarity;
                 }
-                ItemParseSections::ItemRarity => todo!(),
-                ItemParseSections::ItemName => todo!(),
-                ItemParseSections::ItemStats => todo!(),
-                ItemParseSections::ItemMods => todo!(),
+                ItemParseSections::ItemRarity => {
+                    let res = COLON_REGEX
+                        .captures(line)
+                        .context("should match first line")?;
+
+                    assert_eq!(
+                        res.name("left")
+                            .context("left part of first line")?
+                            .as_str(),
+                        "Rarity"
+                    );
+
+                    let _ = Some(res.name("right").unwrap());
+
+                    debug!(?item_type);
+                    cur_parser_state = ItemParseSections::ItemName;
+                },
+                ItemParseSections::ItemName => {
+                    if line == "--------" {
+                        trace!("Item line separator");
+                        cur_parser_state = ItemParseSections::ItemStats;
+                        continue;
+                    }
+
+                    if !item_name.is_empty() {
+                        item_name.push('\n');
+                    }
+                    item_name.push_str(line);
+                },
+                ItemParseSections::ItemStats => {
+                    if line == "--------" {
+                        trace!("Item line separator");
+
+                        // Check the next line to see if it contains a mod.
+                        // If it does, advance the state.
+                        if line_iterator.peek().context("nothing after separator")?.starts_with("{") {
+                            debug!("Moving to next state");
+                            cur_parser_state = ItemParseSections::ItemMods;
+                            continue;
+                        }
+                    }
+
+                    trace!(line, "Item stat line");
+                },
+                ItemParseSections::ItemMods => {
+                    // If we have a mod line saved, then combine that with the current line.
+                    // These two lines make up a single mod. ex:
+                    //
+                    // last:  { Unique Modifier — Elemental, Fire, Resistance }
+                    // cur:   +49(40-50)% to Fire Resistance
+                    if let Some(last_line) = current_parsed_modline {
+                        debug!("... Got second modline");
+                        let item_mod = ItemMod::from_strs(last_line, line)?;
+                        mods.push(item_mod);
+                        current_parsed_modline = None;
+                    // If the line starts with `{`, then it is a mod
+                    } else if line.starts_with("{") {
+                        debug!("Got first modline...");
+                        current_parsed_modline = Some(line);
+                        continue;
+                    } else if line == "--------" {
+                        trace!("Item line separator");
+                    }
+                },
             };
 
-            // If we have a mod line saved, then combine that with the current line.
-            // These two lines make up a single mod. ex:
-            //
-            // last:  { Unique Modifier — Elemental, Fire, Resistance }
-            // cur:   +49(40-50)% to Fire Resistance
-            if let Some(last_line) = current_parsed_modline {
-                debug!("... Got second modline");
-                let item_mod = ItemMod::from_strs(last_line, line)?;
-                mods.push(item_mod);
-            // If the line starts with `{`, then it is a mod
-            } else if line.starts_with("{") {
-                debug!("Got first modline...");
-                current_parsed_modline = Some(line);
-                continue;
-            } else if line == "--------" {
-                trace!("Item line separator");
-            }
         }
 
-        todo!()
+        //let item_name = match item_name
+        let item = Item {
+            base_name: "",
+            item_name: ItemName::Normal,
+            stats: vec![],
+            ilvl: 1,
+            sockets: "",
+            mods
+        };
+        Ok(item)
     }
 }
 
@@ -209,6 +271,7 @@ impl<'a> ItemMod<'a> {
             Some("Prefix") => AffixType::Prefix,
             Some("Suffix") => AffixType::Suffix,
             Some("Unique") => AffixType::Unique,
+            Some("Implicit") => AffixType::Implicit,
             // TODO parse error
             Some(at) => anyhow::bail!("Unknown affix type {at}"),
             None => unreachable!("required in regex pattern"),
@@ -324,6 +387,24 @@ mod test {
         assert!(mods.roll_range.is_none());
         assert!(mods.affix_name_tier.is_none());
         assert_eq!(mods.tags, &["Mana"]);
+    }
+
+    #[traced_test]
+    #[test]
+    fn all_item_mod_integration_tests() {
+        let item_texts = [
+            include_str!("../tests/example_items/amulet.txt"),
+            include_str!("../tests/example_items/unique.txt"),
+            include_str!("../tests/example_items/magic_helm.txt"),
+        ];
+
+        for text in item_texts {
+            let text = text.trim();
+
+            let t = Item::from_str(text).unwrap();
+            dbg!(t);
+        }
+        panic!();
     }
 
     #[traced_test]
