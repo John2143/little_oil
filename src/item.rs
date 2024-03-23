@@ -135,6 +135,7 @@ impl<'a> Item<'a> {
                     let res = COLON_REGEX
                         .captures(line)
                         .context("should match first line")?;
+
                     assert_eq!(
                         res.name("left")
                             .context("left part of first line")?
@@ -162,9 +163,7 @@ impl<'a> Item<'a> {
                 debug!("Got first modline...");
                 current_parsed_modline = Some(line);
                 continue;
-            }
-
-            if line == "--------" {
+            } else if line == "--------" {
                 trace!("Item line separator");
             }
         }
