@@ -4,6 +4,7 @@ use anyhow::Context;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use rust_decimal::Decimal;
+use tracing::{trace, debug};
 
 #[derive(Debug)]
 pub struct Item<'a> {
@@ -80,12 +81,12 @@ pub struct ItemMod<'a> {
 }
 
 #[non_exhaustive]
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum AffixType {
     Prefix, Suffix, Unique,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct AffixNameTier<'a> {
     name: &'a str,
     tier: i32,
@@ -98,7 +99,7 @@ pub struct AffixNameTier<'a> {
 const IMR_1: &str = r#"\{ (?P<affix_type>\w+) Modifier (?:"(?P<name>.+)" \(Tier: (?P<tier>\d+)\) )?(?:— (?P<affixes>.*) )?\}"#;
 const ITEM_MOD_LINE_1_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(IMR_1).unwrap());
 
-const IMR_2: &str = r#"(?P<before>.*?)(?P<value>\d+(?:\.\d+)?)?(?:\((?P<bot_roll>\d+(?:\.\d+)?)-(?P<top_roll>\d+(?:\.\d+)?)\))?(?P<end>.*)"#;
+const IMR_2: &str = r#"(?P<before>[^\d]*)(?P<value>\d+(?:\.\d+)?)?(?:\((?P<bot_roll>\d+(?:\.\d+)?)-(?P<top_roll>\d+(?:\.\d+)?)\))?(?P<end>.*)"#;
 const ITEM_MOD_LINE_2_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(IMR_2).unwrap());
 
 impl<'a> Item<'a> {
@@ -113,8 +114,9 @@ impl<'a> Item<'a> {
 
 impl<'a> ItemMod<'a> {
     fn from_strs(top_line: &'a str, bottom_line: &'a str) -> anyhow::Result<Self> {
-        println!("Parsing {top_line:?}");
+        debug!("Parsing {top_line:?}");
         let q = ITEM_MOD_LINE_1_REGEX.captures(top_line).context("top mod line regex failed")?;
+        trace!(?q);
 
         //Parsing "{ Prefix Modifier \"Phantasm's\" (Tier: 3) — Defences, Evasion }"
         //[src/item.rs:116:9] q = Captures(
@@ -125,8 +127,9 @@ impl<'a> ItemMod<'a> {
             //"affixes": "Defences, Evasion",
         //)
 
-        println!("Parsing {bottom_line:?}");
+        debug!("Parsing {bottom_line:?}");
         let e = ITEM_MOD_LINE_2_REGEX.captures(bottom_line).context("bottom mod line regex failed")?;
+        trace!(?e);
 
         //Parsing "79(68-79)% increased Evasion Rating"
         //[src/item.rs:119:9] e = Captures(
@@ -181,28 +184,88 @@ impl<'a> ItemMod<'a> {
         // Turn Fire, Cold, Elemental into a vec of `Fire` `Cold `Elemental`
         let tags = q.name("affixes").map(|x| x.as_str().split(", ").collect()).unwrap_or_default();
 
-        Ok(ItemMod {
+        let final_item = ItemMod {
             affix_type: at,
             affix_name_tier: ant,
             value,
             roll_range,
             tags,
             mod_qualifiers: "", //TODO
-        })
+        };
+
+        debug!(?final_item, "Created item");
+
+        Ok(final_item)
     }
 }
 
 #[cfg(test)]
 mod test {
+    use tracing_test::traced_test;
+
     use super::*;
 
-    #[test]
-    fn parse_all_items() {
+    fn run_item_mod(s: &str) -> anyhow::Result<ItemMod<'_>> {
+        let mut parts = s.trim().lines();
+        let x = parts.next().unwrap().trim();
+        let y = parts.next().unwrap().trim();
+        ItemMod::from_strs(x, y)
     }
 
+    #[traced_test]
     #[test]
-    fn item_mod() {
-        let lines = [
+    fn mod_test_rare() {
+        let modline = r#"
+        { Prefix Modifier "Phantasm's" (Tier: 3) — Defences, Evasion }
+        73(68-79)% increased Evasion Rating"#;
+
+        let mods = run_item_mod(modline).unwrap();
+        assert_eq!(mods.affix_type, AffixType::Prefix);
+        assert_eq!(mods.value, Some(73.into()));
+        assert_eq!(mods.roll_range, Some(68.into()..79.into()));
+
+        let ant = mods.affix_name_tier.unwrap();
+        assert_eq!(ant.name, "Phantasm's");
+        assert_eq!(ant.tier, 3);
+
+        assert_eq!(mods.tags, &["Defences", "Evasion"]);
+    }
+
+    #[traced_test]
+    #[test]
+    fn mod_test_unique() {
+        let modline = r#"
+        { Unique Modifier — Elemental, Fire, Resistance }
+        +49(40-50)% to Fire Resistance"#;
+
+        let mods = run_item_mod(modline).unwrap();
+        assert_eq!(mods.affix_type, AffixType::Unique);
+        assert_eq!(mods.value, Some(49.into()));
+        assert_eq!(mods.roll_range, Some(40.into()..50.into()));
+        assert!(mods.affix_name_tier.is_none());
+
+        assert_eq!(mods.tags, &["Elemental", "Fire", "Resistance"]);
+    }
+
+    #[traced_test]
+    #[test]
+    fn mod_test_unique_no_roll() {
+        let modline = r#"
+        { Unique Modifier — Mana }
+        60% increased Mana Regeneration Rate"#;
+
+        let mods = run_item_mod(modline).unwrap();
+        assert_eq!(mods.affix_type, AffixType::Unique);
+        assert_eq!(mods.value, Some(60.into()));
+        assert!(mods.roll_range.is_none());
+        assert!(mods.affix_name_tier.is_none());
+        assert_eq!(mods.tags, &["Mana"]);
+    }
+
+    #[traced_test]
+    #[test]
+    fn item_mods() {
+        let _ = [
             r#"
                 { Prefix Modifier "Phantasm's" (Tier: 3) — Defences, Evasion }
                 79(68-79)% increased Evasion Rating
@@ -223,18 +286,5 @@ mod test {
                 +29(24-29)% to Lightning Resistance (fractured)
             "#,
         ];
-        for line in lines {
-            let mut parts = line.trim().lines();
-            let x = parts.next().unwrap().trim();
-            let y = parts.next().unwrap().trim();
-            dbg!(ItemMod::from_strs(x, y));
-        }
-
-        panic!();
-
-        //let result = [
-            //temMod
-
-        //];
     }
 }

@@ -72,6 +72,9 @@ where
 }
 
 fn main() {
+    tracing_subscriber::fmt::init();
+    tracing::info!("Starting main loop");
+
     let mut _rand = rand::thread_rng();
     let set = match load_config(CONFIG_PATH, Some(&DEFAULT_SETTINGS)) {
         Ok(s) => s,
