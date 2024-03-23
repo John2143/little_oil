@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 
 mod chaos_recipe;
 mod dicts;
+pub mod item;
+mod auto_roll;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Settings {
@@ -16,28 +18,6 @@ pub struct Settings {
     div_delay: u64,
     inv_colors: Option<Vec<u32>>,
     screen_height: Option<u32>,
-}
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct AutoRollMod {
-    name: String,
-    is_prefix: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct AutoRollConfig {
-    item_name: String,
-    mods: Vec<AutoRollMod>,
-    auto_aug_regal: bool,
-}
-
-impl AutoRollConfig {
-    fn needs_prefix(&self) -> bool {
-        self.mods.iter().any(|x| x.is_prefix)
-    }
-
-    fn needs_suffix(&self) -> bool {
-        self.mods.iter().any(|x| !x.is_prefix)
-    }
 }
 
 use std::fs;
@@ -129,7 +109,8 @@ fn main() {
                 .expect("missing number of times to roll")
                 .parse()
                 .expect("invalid number");
-            auto_roll(&file, times);
+
+            auto_roll::auto_roll(&file, times);
             return;
         }
         Some("reset_inv") => {
@@ -220,40 +201,8 @@ fn split_space(input: &str) -> (&str, &str) {
     return (input, "");
 }
 
-#[test]
-fn test_auto_roll() {
-    auto_roll("test.json", 1);
-}
-
 use clipboard::ClipboardContext;
 use clipboard::ClipboardProvider;
-
-#[derive(Debug)]
-struct RollResult {
-    has_prefix: bool,
-    has_suffix: bool,
-    has_mod: bool,
-}
-
-fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
-    let maybe_name = item_text
-        .lines()
-        .filter(|s| s.contains(&config.item_name))
-        .nth(0)
-        .unwrap();
-
-    dbg!(&item_text.lines().collect::<Vec<_>>()[8..]);
-
-    RollResult {
-        has_prefix: !maybe_name.starts_with(&config.item_name),
-        has_suffix: !maybe_name.ends_with(&config.item_name),
-        has_mod: config
-            .mods
-            .iter()
-            .map(|x| x.name.as_str())
-            .any(|x| item_text.to_lowercase().contains(&x)),
-    }
-}
 
 fn read_item_on_cursor() -> String {
     static mut CTX: Option<ClipboardContext> = None;
@@ -297,92 +246,6 @@ fn chance() {
         click(slot.0, slot.1);
         std::thread::sleep(std::time::Duration::from_millis(sleep_read));
     }
-}
-
-fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
-    #![allow(unused_variables)]
-    let alt = (155, 354);
-    let aug = (300, 422);
-    let reg = (572, 354);
-    let slot = (444, 628);
-
-    let config: AutoRollConfig = {
-        match load_config(&path, None) {
-            Ok(config) => config,
-            Err(msg) => {
-                println!("{}", msg);
-                return None;
-            }
-        }
-    };
-
-    assert!(times > 0);
-
-    let sleep_click = 20;
-    let sleep_read = 200;
-
-    let mut i = 0;
-    let mut res;
-    println!("rolling!");
-    click(3, 3);
-    std::thread::sleep(std::time::Duration::from_millis(1000));
-    loop {
-        std::thread::sleep(std::time::Duration::from_millis(sleep_click));
-        click_right(alt.0, alt.1);
-        std::thread::sleep(std::time::Duration::from_millis(sleep_click * 2));
-        click(slot.0, slot.1);
-        std::thread::sleep(std::time::Duration::from_millis(sleep_read));
-
-        println!("alt");
-        let item = read_item_on_cursor();
-        res = check_roll(&item, &config);
-        if res.has_mod {
-            println!("got mod");
-            break;
-        }
-
-        if (!res.has_prefix && config.needs_prefix()) || (!res.has_suffix && config.needs_suffix())
-        {
-            println!("aug");
-            std::thread::sleep(std::time::Duration::from_millis(sleep_click));
-            click_right(aug.0, aug.1);
-            std::thread::sleep(std::time::Duration::from_millis(sleep_click));
-            click(slot.0, slot.1);
-            std::thread::sleep(std::time::Duration::from_millis(sleep_read));
-
-            res = check_roll(&read_item_on_cursor(), &config);
-            if res.has_mod {
-                break;
-            }
-        }
-
-        i += 1;
-
-        if i == times {
-            break;
-        }
-
-        if KeybdKey::RControlKey.is_pressed() {
-            return Some(res);
-        }
-    }
-
-    if res.has_mod && config.auto_aug_regal {
-        std::thread::sleep(std::time::Duration::from_millis(sleep_click));
-        click_right(aug.0, aug.1);
-        std::thread::sleep(std::time::Duration::from_millis(sleep_click));
-        click(slot.0, slot.1);
-
-        std::thread::sleep(std::time::Duration::from_millis(sleep_click));
-        click_right(reg.0, reg.1);
-        std::thread::sleep(std::time::Duration::from_millis(sleep_click));
-        click(slot.0, slot.1);
-        std::thread::sleep(std::time::Duration::from_millis(sleep_read));
-
-        res = check_roll(&read_item_on_cursor(), &config);
-    }
-
-    Some(res)
 }
 
 static HELP: &str = r#"
@@ -442,7 +305,7 @@ fn command_line() {
                 let (file, times) = split_space(rest);
                 println!("Loading chrome file {}", file);
 
-                match auto_roll(&file, times.parse().unwrap()) {
+                match auto_roll::auto_roll(&file, times.parse().unwrap()) {
                     None => println!("failed to roll"),
                     Some(res) => {
                         println!("{:?}", res);
@@ -517,6 +380,9 @@ fn move_mouse(x: i32, y: i32) {
 
 use once_cell::sync::Lazy;
 use std::sync::RwLock;
+
+use crate::auto_roll::AutoRollConfig;
+use crate::auto_roll::AutoRollMod;
 
 fn reset_inv_colors() {
     let settings = SETTINGS.read().unwrap();

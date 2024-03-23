@@ -1,0 +1,22 @@
+Item Class: Amulets
+Rarity: Rare
+Damnation Collar
+Onyx Amulet
+--------
+Requirements:
+Level: 52
+--------
+Item Level: 79
+--------
+{ Implicit Modifier — Attribute }
++13(10-16) to all Attributes (implicit)
+(Attributes are Strength, Dexterity, and Intelligence) (implicit)
+--------
+{ Prefix Modifier "Incinerating" (Tier: 3) — Damage, Elemental, Fire, Attack }
+Adds 17(13-18) to 31(27-31) Fire Damage to Attacks
+{ Suffix Modifier "of the Seal" (Tier: 7) — Elemental, Cold, Resistance }
++15(12-17)% to Cold Resistance
+{ Suffix Modifier "of the Jaguar" (Tier: 3) — Attribute }
++42(38-42) to Dexterity
+{ Suffix Modifier "of Osmosis" (Tier: 2) — Mana }
+Gain 3(2-3) Mana per Enemy Killed

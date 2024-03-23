@@ -1,0 +1,21 @@
+Item Class: Helmets
+Rarity: Magic
+Phantasm's Silken Hood of the Thunderhead
+--------
+Evasion Rating: 682 (augmented)
+--------
+Requirements:
+Level: 60
+Dex: 138
+--------
+Sockets: R G 
+--------
+Item Level: 76
+--------
+{ Prefix Modifier "Phantasm's" (Tier: 3) — Defences, Evasion }
+79(68-79)% increased Evasion Rating
+{ Suffix Modifier "of the Thunderhead" (Tier: 5) — Elemental, Lightning, Resistance }
++29(24-29)% to Lightning Resistance (fractured)
+--------
+Fractured Item
+

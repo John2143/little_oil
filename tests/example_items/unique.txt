@@ -1,0 +1,25 @@
+Item Class: Boots
+Rarity: Unique
+Goldwyrm
+Nubuck Boots
+--------
+Evasion Rating: 118
+--------
+Requirements:
+Level: 34
+Dex: 62
+--------
+Sockets: G 
+--------
+Item Level: 74
+--------
+{ Unique Modifier — Elemental, Fire, Resistance }
++49(40-50)% to Fire Resistance
+{ Unique Modifier — Mana }
+60% increased Mana Regeneration Rate
+{ Unique Modifier }
+17(14-20)% increased Quantity of Items found
+{ Unique Modifier — Speed }
+10% increased Movement Speed
+--------
+The wyrm draws warmth from the fires of desire.
