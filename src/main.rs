@@ -5,10 +5,10 @@ use std::io::{self, BufRead};
 
 use serde::{Deserialize, Serialize};
 
+mod auto_roll;
 mod chaos_recipe;
 mod dicts;
 pub mod item;
-mod auto_roll;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Settings {

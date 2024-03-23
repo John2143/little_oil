@@ -1,10 +1,10 @@
-use std::{fmt::Display, str::FromStr, ops::Range, thread::current};
+use std::{fmt::Display, ops::Range, str::FromStr, thread::current};
 
 use anyhow::Context;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use rust_decimal::Decimal;
-use tracing::{trace, debug};
+use tracing::{debug, trace};
 
 #[derive(Debug)]
 pub struct Item<'a> {
@@ -37,7 +37,6 @@ pub enum ItemName<'a> {
     Rare(&'a str),
     Unique(&'a str),
 }
-
 
 impl<'a> Display for ItemName<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -83,7 +82,9 @@ pub struct ItemMod<'a> {
 #[non_exhaustive]
 #[derive(Debug, PartialEq, Eq)]
 pub enum AffixType {
-    Prefix, Suffix, Unique,
+    Prefix,
+    Suffix,
+    Unique,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -115,7 +116,6 @@ enum ItemParseSections {
     //ItemRequirements,
     //ItemSockets,
     //ItemLevel,
-
     ItemMods,
 }
 
@@ -132,9 +132,16 @@ impl<'a> Item<'a> {
             match cur_parser_state {
                 //First state: What are we looking at?
                 ItemParseSections::ItemClass => {
-                    let res = COLON_REGEX.captures(line).context("should match first line")?;
-                    assert_eq!(res.name("left").context("left part of first line")?.as_str(), "Item Class");
-                },
+                    let res = COLON_REGEX
+                        .captures(line)
+                        .context("should match first line")?;
+                    assert_eq!(
+                        res.name("left")
+                            .context("left part of first line")?
+                            .as_str(),
+                        "Item Class"
+                    );
+                }
                 ItemParseSections::ItemRarity => todo!(),
                 ItemParseSections::ItemName => todo!(),
                 ItemParseSections::ItemStats => todo!(),
@@ -160,7 +167,6 @@ impl<'a> Item<'a> {
             if line == "--------" {
                 trace!("Item line separator");
             }
-
         }
 
         todo!()
@@ -170,30 +176,34 @@ impl<'a> Item<'a> {
 impl<'a> ItemMod<'a> {
     fn from_strs(top_line: &'a str, bottom_line: &'a str) -> anyhow::Result<Self> {
         debug!("Parsing {top_line:?}");
-        let q = ITEM_MOD_LINE_1_REGEX.captures(top_line).context("top mod line regex failed")?;
+        let q = ITEM_MOD_LINE_1_REGEX
+            .captures(top_line)
+            .context("top mod line regex failed")?;
         trace!(?q);
 
         //Parsing "{ Prefix Modifier \"Phantasm's\" (Tier: 3) — Defences, Evasion }"
         //[src/item.rs:116:9] q = Captures(
-            //0: "{ Prefix Modifier \"Phantasm's\" (Tier: 3) — Defences, Evasion }",
-            //"affix_type": "Prefix",
-            //"name": "Phantasm's",
-            //"tier": "3",
-            //"affixes": "Defences, Evasion",
+        //0: "{ Prefix Modifier \"Phantasm's\" (Tier: 3) — Defences, Evasion }",
+        //"affix_type": "Prefix",
+        //"name": "Phantasm's",
+        //"tier": "3",
+        //"affixes": "Defences, Evasion",
         //)
 
         debug!("Parsing {bottom_line:?}");
-        let e = ITEM_MOD_LINE_2_REGEX.captures(bottom_line).context("bottom mod line regex failed")?;
+        let e = ITEM_MOD_LINE_2_REGEX
+            .captures(bottom_line)
+            .context("bottom mod line regex failed")?;
         trace!(?e);
 
         //Parsing "79(68-79)% increased Evasion Rating"
         //[src/item.rs:119:9] e = Captures(
-            //0: "79(68-79)% increased Evasion Rating",
-            //"before": "",
-            //"value": "79",
-            //"bot_roll": "68",
-            //"top_roll": "79",
-            //"end": "% increased Evasion Rating",
+        //0: "79(68-79)% increased Evasion Rating",
+        //"before": "",
+        //"value": "79",
+        //"bot_roll": "68",
+        //"top_roll": "79",
+        //"end": "% increased Evasion Rating",
         //)
 
         let at = match q.name("affix_type").map(|x| x.as_str()) {
@@ -213,11 +223,8 @@ impl<'a> ItemMod<'a> {
                 // Parse the tier into a number
                 let tier = tier.as_str().parse()?;
 
-                Some(AffixNameTier {
-                    name,
-                    tier,
-                })
-            },
+                Some(AffixNameTier { name, tier })
+            }
         };
 
         // Parse the value regex into a decimal
@@ -233,11 +240,14 @@ impl<'a> ItemMod<'a> {
                 let top_parsed = top.as_str().parse()?;
 
                 Some(bot_parsed..top_parsed)
-            },
+            }
         };
 
         // Turn Fire, Cold, Elemental into a vec of `Fire` `Cold `Elemental`
-        let tags = q.name("affixes").map(|x| x.as_str().split(", ").collect()).unwrap_or_default();
+        let tags = q
+            .name("affixes")
+            .map(|x| x.as_str().split(", ").collect())
+            .unwrap_or_default();
 
         let final_item = ItemMod {
             affix_type: at,
@@ -324,19 +334,24 @@ mod test {
             r#"
                 { Prefix Modifier "Phantasm's" (Tier: 3) — Defences, Evasion }
                 79(68-79)% increased Evasion Rating
-            "#, r#"
+            "#,
+            r#"
                 { Unique Modifier — Elemental, Fire, Resistance }
                 +49(40-50)% to Fire Resistance
-            "#, r#"
+            "#,
+            r#"
                 { Unique Modifier — Mana }
                 60% increased Mana Regeneration Rate
-            "#, r#"
+            "#,
+            r#"
                 { Unique Modifier }
                 17(14-20)% increased Quantity of Items found
-            "#, r#"
+            "#,
+            r#"
                 { Unique Modifier — Speed }
                 10% increased Movement Speed
-            "#, r#"
+            "#,
+            r#"
                 { Suffix Modifier "of the Thunderhead" (Tier: 5) — Elemental, Lightning, Resistance }
                 +29(24-29)% to Lightning Resistance (fractured)
             "#,

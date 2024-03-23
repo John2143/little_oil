@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{load_config, click, click_right, read_item_on_cursor};
+use crate::{click, click_right, load_config, read_item_on_cursor};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AutoRollMod {
@@ -137,7 +137,6 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
             .any(|x| item_text.to_lowercase().contains(&x)),
     }
 }
-
 
 #[test]
 fn test_auto_roll() {
