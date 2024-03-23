@@ -1,4 +1,5 @@
 use inputbot::KeybdKey;
+use rand::Rng;
 
 use std::io::{self, BufRead};
 
@@ -212,21 +213,28 @@ fn read_item_on_cursor() -> String {
     let safectx =
         unsafe { CTX.get_or_insert_with(|| clipboard::ClipboardProvider::new().unwrap()) };
     safectx.set_contents("".into()).unwrap();
+    let mut trng = rand::thread_rng();
 
     loop {
         std::thread::sleep(std::time::Duration::from_millis(5));
         KeybdKey::CKey.press();
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::thread::sleep(std::time::Duration::from_millis(trng.gen_range(4, 25)));
         KeybdKey::CKey.release();
 
-        match safectx.get_contents() {
-            Ok(s) => {
-                if s != "" {
-                    return s;
+        //250 ms total
+        for _ in 0..50 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            match safectx.get_contents() {
+                Ok(s) => {
+                    if s != "" {
+                        return s;
+                    }
                 }
+                Err(_) => {}
             }
-            Err(_) => {}
         }
+
+        std::thread::sleep(std::time::Duration::from_millis(trng.gen_range(1,150)));
     }
 }
 
