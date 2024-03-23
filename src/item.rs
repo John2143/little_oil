@@ -52,7 +52,8 @@ impl<'a> Display for ItemName {
                 }
                 (prefix, suffix) => {
                     write!(f, "M(p+s): {prefix} : {suffix}")?;
-                } },
+                }
+            },
             ItemName::Rare(name) => write!(f, "R: {name}")?,
             ItemName::Unique(name) => write!(f, "U: {name}")?,
         };
@@ -169,7 +170,7 @@ impl<'a> Item<'a> {
 
                     debug!(?item_type);
                     cur_parser_state = ItemParseSections::ItemName;
-                },
+                }
                 ItemParseSections::ItemName => {
                     if line == "--------" {
                         trace!("Item line separator");
@@ -181,14 +182,18 @@ impl<'a> Item<'a> {
                         item_name.push('\n');
                     }
                     item_name.push_str(line);
-                },
+                }
                 ItemParseSections::ItemStats => {
                     if line == "--------" {
                         trace!("Item line separator");
 
                         // Check the next line to see if it contains a mod.
                         // If it does, advance the state.
-                        if line_iterator.peek().context("nothing after separator")?.starts_with("{") {
+                        if line_iterator
+                            .peek()
+                            .context("nothing after separator")?
+                            .starts_with("{")
+                        {
                             debug!("Moving to next state");
                             cur_parser_state = ItemParseSections::ItemMods;
                             continue;
@@ -196,7 +201,7 @@ impl<'a> Item<'a> {
                     }
 
                     trace!(line, "Item stat line");
-                },
+                }
                 ItemParseSections::ItemMods => {
                     // If we have a mod line saved, then combine that with the current line.
                     // These two lines make up a single mod. ex:
@@ -216,9 +221,8 @@ impl<'a> Item<'a> {
                     } else if line == "--------" {
                         trace!("Item line separator");
                     }
-                },
+                }
             };
-
         }
 
         // TODO
@@ -228,7 +232,7 @@ impl<'a> Item<'a> {
             stats: vec![],
             ilvl: 1,
             sockets: "",
-            mods
+            mods,
         };
         Ok(item)
     }
@@ -241,8 +245,8 @@ impl<'a> Item<'a> {
             match mo.affix_type {
                 AffixType::Prefix => prefixes += 1,
                 AffixType::Suffix => suffixes += 1,
-                AffixType::Implicit => {},
-                AffixType::Unique => {},
+                AffixType::Implicit => {}
+                AffixType::Unique => {}
             }
         }
 
