@@ -1,4 +1,4 @@
-use std::{fmt::Display, str::FromStr, ops::Range};
+use std::{fmt::Display, str::FromStr, ops::Range, thread::current};
 
 use anyhow::Context;
 use once_cell::sync::Lazy;
@@ -102,10 +102,65 @@ const ITEM_MOD_LINE_1_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(IMR_1).unwrap
 const IMR_2: &str = r#"(?P<before>[^\d]*)(?P<value>\d+(?:\.\d+)?)?(?:\((?P<bot_roll>\d+(?:\.\d+)?)-(?P<top_roll>\d+(?:\.\d+)?)\))?(?P<end>.*)"#;
 const ITEM_MOD_LINE_2_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(IMR_2).unwrap());
 
+const CR: &str = r#"(?P<left>[^:]+):(?P<right>.+)"#;
+const COLON_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(CR).unwrap());
+
+enum ItemParseSections {
+    ItemClass,
+    ItemRarity,
+    ItemName,
+
+    ItemStats,
+
+    //ItemRequirements,
+    //ItemSockets,
+    //ItemLevel,
+
+    ItemMods,
+}
+
 impl<'a> Item<'a> {
-    fn from_str(source: &'a str) -> Self {
-        let mut is_parsing_mod = false;
-        for line in source.lines() {
+    #[tracing::instrument]
+    fn from_str(source: &'a str) -> anyhow::Result<Self> {
+        let cur_parser_state = ItemParseSections::ItemClass;
+
+        let mut current_parsed_modline = None;
+        let mut mods = vec![];
+        for line in source.trim().lines() {
+            let line = line.trim();
+
+            match cur_parser_state {
+                //First state: What are we looking at?
+                ItemParseSections::ItemClass => {
+                    let res = COLON_REGEX.captures(line).context("should match first line")?;
+                    assert_eq!(res.name("left").context("left part of first line")?.as_str(), "Item Class");
+                },
+                ItemParseSections::ItemRarity => todo!(),
+                ItemParseSections::ItemName => todo!(),
+                ItemParseSections::ItemStats => todo!(),
+                ItemParseSections::ItemMods => todo!(),
+            };
+
+            // If we have a mod line saved, then combine that with the current line.
+            // These two lines make up a single mod. ex:
+            //
+            // last:  { Unique Modifier — Elemental, Fire, Resistance }
+            // cur:   +49(40-50)% to Fire Resistance
+            if let Some(last_line) = current_parsed_modline {
+                debug!("... Got second modline");
+                let item_mod = ItemMod::from_strs(last_line, line)?;
+                mods.push(item_mod);
+            // If the line starts with `{`, then it is a mod
+            } else if line.starts_with("{") {
+                debug!("Got first modline...");
+                current_parsed_modline = Some(line);
+                continue;
+            }
+
+            if line == "--------" {
+                trace!("Item line separator");
+            }
+
         }
 
         todo!()
