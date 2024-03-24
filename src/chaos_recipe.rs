@@ -393,8 +393,8 @@ impl ItemList<'_> {
             ("Amulet", self.amulet),
         ];
 
-        use inputbot::KeybdKey;
-        KeybdKey::LControlKey.press();
+        //use inputbot::KeybdKey;
+        //KeybdKey::LControlKey.press();
         std::thread::sleep(std::time::Duration::from_millis(delay - 10));
         for (name, c) in clicks {
             match c {
@@ -408,7 +408,7 @@ impl ItemList<'_> {
             }
         }
 
-        KeybdKey::LControlKey.release();
+        //KeybdKey::LControlKey.release();
     }
 }
 

@@ -1,4 +1,4 @@
-use inputbot::KeybdKey;
+//use inputbot::KeybdKey;
 use rand::Rng;
 
 use std::io::{self, BufRead};
@@ -174,24 +174,24 @@ fn main() {
 
     println!("starting in inputbot mode");
 
-    KeybdKey::HomeKey.bind(move || {
-        sort_quad(40);
-    });
-    KeybdKey::AKey.bind(move || {
-        empty_inv();
-    });
+    //KeybdKey::HomeKey.bind(move || {
+        //sort_quad(40);
+    //});
+    //KeybdKey::AKey.bind(move || {
+        //empty_inv();
+    //});
 
-    KeybdKey::F7Key.bind(move || {
-        chance();
-    });
+    //KeybdKey::F7Key.bind(move || {
+        //chance();
+    //});
 
-    let inputs = std::thread::spawn(|| inputbot::handle_input_events());
+    //let inputs = std::thread::spawn(|| inputbot::handle_input_events());
 
     let cmdline = std::thread::spawn(move || {
         command_line();
     });
 
-    inputs.join().unwrap();
+    //inputs.join().unwrap();
     cmdline.join().unwrap();
 }
 
@@ -217,9 +217,9 @@ fn read_item_on_cursor() -> String {
 
     loop {
         std::thread::sleep(std::time::Duration::from_millis(5));
-        KeybdKey::CKey.press();
+        //inputbot::KeybdKey::CKey.press();
         std::thread::sleep(std::time::Duration::from_millis(trng.gen_range(4..25)));
-        KeybdKey::CKey.release();
+        //inputbot::KeybdKey::CKey.release();
 
         //250 ms total
         for _ in 0..50 {
@@ -356,36 +356,36 @@ fn command_line() {
     }
 }
 
-thread_local!(static MOUSE: Lazy<mouse_rs::Mouse> = Lazy::new(|| mouse_rs::Mouse::new()));
+//thread_local!(static MOUSE: Lazy<mouse_rs::Mouse> = Lazy::new(|| mouse_rs::Mouse::new()));
 
 fn click(x: i32, y: i32) {
-    MOUSE.with(|mouse| {
-        use mouse_rs::types::keys::Keys;
-        move_mouse(x, y);
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        mouse.press(&Keys::LEFT).expect("failed to click D:");
-        //MouseButton::LeftButton.press();
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        mouse.release(&Keys::LEFT).expect("failed to click D:");
-        //MouseButton::LeftButton.release();
-    })
+    //MOUSE.with(|mouse| {
+        //use mouse_rs::types::keys::Keys;
+        //move_mouse(x, y);
+        //std::thread::sleep(std::time::Duration::from_millis(30));
+        //mouse.press(&Keys::LEFT).expect("failed to click D:");
+        ////MouseButton::LeftButton.press();
+        //std::thread::sleep(std::time::Duration::from_millis(10));
+        //mouse.release(&Keys::LEFT).expect("failed to click D:");
+        ////MouseButton::LeftButton.release();
+    //})
 }
 
 fn click_right(x: i32, y: i32) {
-    MOUSE.with(|mouse| {
-        use mouse_rs::types::keys::Keys;
-        move_mouse(x, y);
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        mouse.press(&Keys::RIGHT).expect("failed to click D:");
-        //MouseButton::LeftButton.press();
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        mouse.release(&Keys::RIGHT).expect("failed to click D:");
-        //MouseButton::LeftButton.release();
-    })
+    //MOUSE.with(|mouse| {
+        //use mouse_rs::types::keys::Keys;
+        //move_mouse(x, y);
+        //std::thread::sleep(std::time::Duration::from_millis(30));
+        //mouse.press(&Keys::RIGHT).expect("failed to click D:");
+        ////MouseButton::LeftButton.press();
+        //std::thread::sleep(std::time::Duration::from_millis(10));
+        //mouse.release(&Keys::RIGHT).expect("failed to click D:");
+        ////MouseButton::LeftButton.release();
+    //})
 }
 
 fn move_mouse(x: i32, y: i32) {
-    inputbot::MouseCursor::move_abs(x, y);
+    //inputbot::MouseCursor::move_abs(x, y);
 }
 
 use once_cell::sync::Lazy;

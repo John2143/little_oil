@@ -95,9 +95,9 @@ pub fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
             break;
         }
 
-        if inputbot::KeybdKey::RControlKey.is_pressed() {
-            return Some(res);
-        }
+        //if inputbot::KeybdKey::RControlKey.is_pressed() {
+            //return Some(res);
+        //}
     }
 
     if res.has_mod && config.auto_aug_regal {
