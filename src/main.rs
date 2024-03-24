@@ -1,5 +1,8 @@
 //use inputbot::KeybdKey;
 use rand::Rng;
+use uinput::event::absolute::Position;
+use uinput::event::controller::Mouse;
+use uinput::event::Controller;
 
 use std::io::{self, BufRead};
 
@@ -175,14 +178,14 @@ fn main() {
     println!("starting in inputbot mode");
 
     //KeybdKey::HomeKey.bind(move || {
-        //sort_quad(40);
+    //sort_quad(40);
     //});
     //KeybdKey::AKey.bind(move || {
-        //empty_inv();
+    //empty_inv();
     //});
 
     //KeybdKey::F7Key.bind(move || {
-        //chance();
+    //chance();
     //});
 
     //let inputs = std::thread::spawn(|| inputbot::handle_input_events());
@@ -358,29 +361,78 @@ fn command_line() {
 
 //thread_local!(static MOUSE: Lazy<mouse_rs::Mouse> = Lazy::new(|| mouse_rs::Mouse::new()));
 
+static FAKE_DEVICE: Lazy<Mutex<uinput::Device>> = Lazy::new(|| {
+    Mutex::new(
+        //uinput::default()
+        //.unwrap()
+        //.name("inputbot")
+        //.unwrap()
+        //.event(uinput::event::Keyboard::All)
+        //.unwrap()
+        //.event(UinputEvent::Controller(Controller::Mouse(Mouse::Left)))
+        //.unwrap()
+        //.event(UinputEvent::Controller(Controller::Mouse(Mouse::Right)))
+        //.unwrap()
+        //.event(UinputEvent::Controller(Controller::Mouse(Mouse::Middle)))
+        //.unwrap()
+        //.event(UinputEvent::Controller(Controller::Mouse(Mouse::Side)))
+        //.unwrap()
+        //.event(UinputEvent::Controller(Controller::Mouse(Mouse::Extra)))
+        //.unwrap()
+        //.event(UinputEvent::Controller(Controller::Mouse(Mouse::Forward)))
+        //.unwrap()
+        //.event(UinputEvent::Controller(Controller::Mouse(Mouse::Back)))
+        //.unwrap()
+        //.event(UinputEvent::Controller(Controller::Mouse(Mouse::Task)))
+        //.unwrap()
+        //.event(Position::X)
+        //.unwrap()
+        //.event(Position::Y)
+        //.unwrap()
+        //.create()
+        //.unwrap(),
+        uinput::default()
+            .unwrap()
+            .name("test")
+            .unwrap()
+            .event(Controller::Mouse(Mouse::Left))
+            .unwrap()
+            .event(Controller::Mouse(Mouse::Right))
+            .unwrap()
+            .event(Position::X)
+            .unwrap()
+            .event(Position::Y)
+            .unwrap()
+            .create()
+            .unwrap(),
+    )
+});
+
 fn click(x: i32, y: i32) {
+    let device = FAKE_DEVICE.lock().unwrap();
+
     //MOUSE.with(|mouse| {
-        //use mouse_rs::types::keys::Keys;
-        //move_mouse(x, y);
-        //std::thread::sleep(std::time::Duration::from_millis(30));
-        //mouse.press(&Keys::LEFT).expect("failed to click D:");
-        ////MouseButton::LeftButton.press();
-        //std::thread::sleep(std::time::Duration::from_millis(10));
-        //mouse.release(&Keys::LEFT).expect("failed to click D:");
-        ////MouseButton::LeftButton.release();
+    //use mouse_rs::types::keys::Keys;
+    //move_mouse(x, y);
+    //std::thread::sleep(std::time::Duration::from_millis(30));
+    //mouse.press(&Keys::LEFT).expect("failed to click D:");
+    ////MouseButton::LeftButton.press();
+    //std::thread::sleep(std::time::Duration::from_millis(10));
+    //mouse.release(&Keys::LEFT).expect("failed to click D:");
+    ////MouseButton::LeftButton.release();
     //})
 }
 
 fn click_right(x: i32, y: i32) {
     //MOUSE.with(|mouse| {
-        //use mouse_rs::types::keys::Keys;
-        //move_mouse(x, y);
-        //std::thread::sleep(std::time::Duration::from_millis(30));
-        //mouse.press(&Keys::RIGHT).expect("failed to click D:");
-        ////MouseButton::LeftButton.press();
-        //std::thread::sleep(std::time::Duration::from_millis(10));
-        //mouse.release(&Keys::RIGHT).expect("failed to click D:");
-        ////MouseButton::LeftButton.release();
+    //use mouse_rs::types::keys::Keys;
+    //move_mouse(x, y);
+    //std::thread::sleep(std::time::Duration::from_millis(30));
+    //mouse.press(&Keys::RIGHT).expect("failed to click D:");
+    ////MouseButton::LeftButton.press();
+    //std::thread::sleep(std::time::Duration::from_millis(10));
+    //mouse.release(&Keys::RIGHT).expect("failed to click D:");
+    ////MouseButton::LeftButton.release();
     //})
 }
 
@@ -389,7 +441,7 @@ fn move_mouse(x: i32, y: i32) {
 }
 
 use once_cell::sync::Lazy;
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 
 use crate::auto_roll::AutoRollConfig;
 use crate::auto_roll::AutoRollMod;
