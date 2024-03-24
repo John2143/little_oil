@@ -218,7 +218,7 @@ fn read_item_on_cursor() -> String {
     loop {
         std::thread::sleep(std::time::Duration::from_millis(5));
         KeybdKey::CKey.press();
-        std::thread::sleep(std::time::Duration::from_millis(trng.gen_range(4, 25)));
+        std::thread::sleep(std::time::Duration::from_millis(trng.gen_range(4..25)));
         KeybdKey::CKey.release();
 
         //250 ms total
@@ -234,7 +234,7 @@ fn read_item_on_cursor() -> String {
             }
         }
 
-        std::thread::sleep(std::time::Duration::from_millis(trng.gen_range(1,150)));
+        std::thread::sleep(std::time::Duration::from_millis(trng.gen_range(1..150)));
     }
 }
 
