@@ -1,7 +1,7 @@
 use mouse_keyboard_input::{key_codes, Button, VirtualDevice};
 //use inputbot::KeybdKey;
 use rand::Rng;
-use tracing::{info, trace};
+use tracing::{debug, info, trace};
 use uinput::event::absolute::Position;
 use uinput::event::controller::Mouse;
 use uinput::event::Controller;
@@ -601,10 +601,9 @@ pub fn take_screenshot_grim() -> Result<ScreenshotData, ()> {
     // pnm "portable any map" in the image crate.
     let img = image::load(stdout, image::ImageFormat::Pnm).unwrap();
 
-
-    let path = Path::new("./last_screnshot.png");
-    info!(path = ?path.canonicalize().unwrap(), "saving screenshot");
-    img.save(path).unwrap();
+    //let path = Path::new("./last_screnshot.png");
+    //info!(path = ?path.canonicalize().unwrap(), "saving screenshot");
+    //img.save(path).unwrap();
 
     Ok(ScreenshotData {
         height: img.height() as usize,
@@ -734,7 +733,6 @@ fn sort_quad(times: u32) {
         let ry = pys[y];
 
         for x in 0..24 {
-            dbg!(&movesleft);
             if movesleft < 1 {
                 break;
             }
@@ -746,7 +744,10 @@ fn sort_quad(times: u32) {
             let col3 = frame.get_pixel(rx + 15, ry);
 
             //let select_color = 2008344320;
-            let select_color = 2008344575;
+            //let select_color = 2008344575;
+            let select_color = 3887364095;
+            debug!(x, y, "pixels");
+            trace!(col1, col2, col3, select_color);
 
             if col1 == select_color || col2 == select_color || col3 == select_color {
                 click((rx + 10) as i32, (ry - 10) as i32);
