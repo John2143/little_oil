@@ -1,10 +1,16 @@
+use mouse_keyboard_input::{key_codes, Button, VirtualDevice};
 //use inputbot::KeybdKey;
 use rand::Rng;
+use tracing::{info, trace};
 use uinput::event::absolute::Position;
 use uinput::event::controller::Mouse;
 use uinput::event::Controller;
+use wayland_client::protocol::wl_registry;
+use wayland_client::Connection;
 
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, Cursor};
+use std::path::Path;
+use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
@@ -74,9 +80,41 @@ where
     }
 }
 
+struct AppData;
+impl wayland_client::Dispatch<wl_registry::WlRegistry, ()> for AppData {
+    fn event(
+        _state: &mut Self,
+        _: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        _: &wayland_client::QueueHandle<AppData>,
+    ) {
+        // When receiving events from the wl_registry, we are only interested in the
+        // `global` event, which signals a new available global.
+        // When receiving this event, we just print its characteristics in this example.
+        if let wl_registry::Event::Global { name, interface, version } = event {
+            println!("[{}] {} (v{})", name, interface, version);
+        }
+    }
+}
+
+
 fn main() {
     tracing_subscriber::fmt::init();
     tracing::info!("Starting main loop");
+
+    // init wayland
+    //let conn = Connection::connect_to_env().expect("Wayland not initialized");
+    //let display = conn.display();
+    //let mut event_queue = conn.new_event_queue();
+    //let qh = event_queue.handle();
+
+    //let _registry = display.get_registry(&qh, ());
+
+    //let mut dat = AppData;
+    //event_queue.roundtrip(&mut dat);
+    //event_queue.blocking_dispatch(&mut dat);
 
     let mut _rand = rand::thread_rng();
     let set = match load_config(CONFIG_PATH, Some(&DEFAULT_SETTINGS)) {
@@ -361,83 +399,38 @@ fn command_line() {
 
 //thread_local!(static MOUSE: Lazy<mouse_rs::Mouse> = Lazy::new(|| mouse_rs::Mouse::new()));
 
-static FAKE_DEVICE: Lazy<Mutex<uinput::Device>> = Lazy::new(|| {
-    Mutex::new(
-        //uinput::default()
-        //.unwrap()
-        //.name("inputbot")
-        //.unwrap()
-        //.event(uinput::event::Keyboard::All)
-        //.unwrap()
-        //.event(UinputEvent::Controller(Controller::Mouse(Mouse::Left)))
-        //.unwrap()
-        //.event(UinputEvent::Controller(Controller::Mouse(Mouse::Right)))
-        //.unwrap()
-        //.event(UinputEvent::Controller(Controller::Mouse(Mouse::Middle)))
-        //.unwrap()
-        //.event(UinputEvent::Controller(Controller::Mouse(Mouse::Side)))
-        //.unwrap()
-        //.event(UinputEvent::Controller(Controller::Mouse(Mouse::Extra)))
-        //.unwrap()
-        //.event(UinputEvent::Controller(Controller::Mouse(Mouse::Forward)))
-        //.unwrap()
-        //.event(UinputEvent::Controller(Controller::Mouse(Mouse::Back)))
-        //.unwrap()
-        //.event(UinputEvent::Controller(Controller::Mouse(Mouse::Task)))
-        //.unwrap()
-        //.event(Position::X)
-        //.unwrap()
-        //.event(Position::Y)
-        //.unwrap()
-        //.create()
-        //.unwrap(),
-        uinput::default()
-            .unwrap()
-            .name("test")
-            .unwrap()
-            .event(Controller::Mouse(Mouse::Left))
-            .unwrap()
-            .event(Controller::Mouse(Mouse::Right))
-            .unwrap()
-            .event(Position::X)
-            .unwrap()
-            .event(Position::Y)
-            .unwrap()
-            .create()
-            .unwrap(),
-    )
+static FAKE_DEVICE: Lazy<Mutex<VirtualDevice>> = Lazy::new(|| {
+    Mutex::new(VirtualDevice::default().unwrap())
 });
 
 fn click(x: i32, y: i32) {
-    let device = FAKE_DEVICE.lock().unwrap();
-
-    //MOUSE.with(|mouse| {
-    //use mouse_rs::types::keys::Keys;
-    //move_mouse(x, y);
-    //std::thread::sleep(std::time::Duration::from_millis(30));
-    //mouse.press(&Keys::LEFT).expect("failed to click D:");
-    ////MouseButton::LeftButton.press();
-    //std::thread::sleep(std::time::Duration::from_millis(10));
-    //mouse.release(&Keys::LEFT).expect("failed to click D:");
-    ////MouseButton::LeftButton.release();
-    //})
+    move_mouse(x, y);
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    click_release(key_codes::BTN_LEFT);
 }
 
 fn click_right(x: i32, y: i32) {
-    //MOUSE.with(|mouse| {
-    //use mouse_rs::types::keys::Keys;
-    //move_mouse(x, y);
-    //std::thread::sleep(std::time::Duration::from_millis(30));
-    //mouse.press(&Keys::RIGHT).expect("failed to click D:");
-    ////MouseButton::LeftButton.press();
-    //std::thread::sleep(std::time::Duration::from_millis(10));
-    //mouse.release(&Keys::RIGHT).expect("failed to click D:");
-    ////MouseButton::LeftButton.release();
-    //})
+    move_mouse(x, y);
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    click_release(key_codes::BTN_RIGHT);
+}
+
+fn click_release(m: Button) {
+    trace!(?m, "click_release");
+    let mut device = FAKE_DEVICE.lock().unwrap();
+
+    device.click(m).unwrap();
+    //device.synchronize().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(10));
 }
 
 fn move_mouse(x: i32, y: i32) {
-    //inputbot::MouseCursor::move_abs(x, y);
+    trace!(x, y, "mouse_move");
+    let mut device = FAKE_DEVICE.lock().unwrap();
+    device.move_mouse(-5000, -5000).unwrap();
+    device.move_mouse(x, y).unwrap();
+    //device.synchronize().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(10));
 }
 
 use once_cell::sync::Lazy;
@@ -552,7 +545,7 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
                     (y * inv_delta + inv_loc.1) as i32,
                 );
 
-                //println!("clicking {} {}", rx, ry);
+                info!(x, y, "clicking inv");
 
                 click(rx, ry);
                 std::thread::sleep(std::time::Duration::from_millis(delay));
@@ -575,13 +568,52 @@ fn empty_inv() {
     //empty_inv_macro(slot, delay);
 }
 
-struct ScreenshotData {
+pub struct ScreenshotData {
     height: usize,
     width: usize,
     pixels: Vec<u8>,
 }
 
 fn take_screenshot() -> Result<ScreenshotData, ()> {
+    // TODO
+    if false {
+        return take_screenshot_scrap();
+    } else {
+        return take_screenshot_grim();
+    }
+}
+
+pub fn take_screenshot_grim() -> Result<ScreenshotData, ()> {
+    let cmd = Command::new("grim")
+        // whole left screen
+        .arg("-g")
+        .arg("0,0 2560x1440")
+        // png out
+        .arg("-t")
+        .arg("ppm")
+        .arg("-")
+        .output()
+        .unwrap();
+
+    // for .seek()
+    let stdout = Cursor::new(cmd.stdout);
+    // the output format ppm "portable pixel map" from grim is called
+    // pnm "portable any map" in the image crate.
+    let img = image::load(stdout, image::ImageFormat::Pnm).unwrap();
+
+
+    let path = Path::new("./last_screnshot.png");
+    info!(path = ?path.canonicalize().unwrap(), "saving screenshot");
+    img.save(path).unwrap();
+
+    Ok(ScreenshotData {
+        height: img.height() as usize,
+        width: img.width() as usize,
+        pixels: img.to_rgba8().to_vec(),
+    })
+}
+
+pub fn take_screenshot_scrap() -> Result<ScreenshotData, ()> {
     println!("taking screenshot...");
     let disp = scrap::Display::primary().unwrap();
     //let disps = scrap::Display::all().unwrap();
