@@ -450,7 +450,6 @@ use crate::auto_roll::AutoRollMod;
 fn reset_inv_colors() -> anyhow::Result<()> {
     let settings = SETTINGS.read().unwrap();
     let height = settings.screen_height.unwrap_or(1080);
-    drop(settings);
 
     let inv_loc = if height == 1080 {
         (1311, 626)
@@ -475,6 +474,7 @@ fn reset_inv_colors() -> anyhow::Result<()> {
     //click(618, 618);
 
     let frame = settings.screenshot()?;
+    drop(settings);
 
     let mut colors = Vec::with_capacity(60);
     colors.resize(60, 0);
@@ -645,7 +645,7 @@ pub fn take_screenshot_scrap() -> anyhow::Result<ScreenshotData> {
         std::thread::sleep(std::time::Duration::from_millis(sleep));
     }
 
-    Err(())
+    bail!("was not able to take screenshot after {maxloops} tries");
 }
 
 impl ScreenshotData {
