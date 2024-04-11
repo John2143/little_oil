@@ -113,12 +113,16 @@ impl wayland_client::Dispatch<wl_registry::WlRegistry, ()> for AppData {
         // When receiving events from the wl_registry, we are only interested in the
         // `global` event, which signals a new available global.
         // When receiving this event, we just print its characteristics in this example.
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             println!("[{}] {} (v{})", name, interface, version);
         }
     }
 }
-
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
@@ -185,7 +189,7 @@ fn main() -> anyhow::Result<()> {
             drop(settings);
 
             chaos_recipe::get_tally(&c);
-            return Ok(())
+            return Ok(());
         }
         Some("chaos") => {
             let amt: usize = args
@@ -404,9 +408,8 @@ fn command_line() {
 
 //thread_local!(static MOUSE: Lazy<mouse_rs::Mouse> = Lazy::new(|| mouse_rs::Mouse::new()));
 
-static FAKE_DEVICE: Lazy<Mutex<VirtualDevice>> = Lazy::new(|| {
-    Mutex::new(VirtualDevice::default().unwrap())
-});
+static FAKE_DEVICE: Lazy<Mutex<VirtualDevice>> =
+    Lazy::new(|| Mutex::new(VirtualDevice::default().unwrap()));
 
 fn click(x: i32, y: i32) {
     move_mouse(x, y);
@@ -518,7 +521,6 @@ fn empty_inv_macro(start_slot: u32, delay: u64) -> anyhow::Result<()> {
     } else {
         panic!("invalid screen size");
     };
-
 
     let frame = settings.screenshot()?;
 
@@ -671,9 +673,7 @@ fn sort_quad(times: u32) -> anyhow::Result<()> {
     std::thread::sleep(std::time::Duration::from_millis(300));
 
     let settings = SETTINGS.read().unwrap();
-    let (delay, height) = {
-        (settings.pull_delay, settings.screen_height.unwrap_or(1080))
-    };
+    let (delay, height) = { (settings.pull_delay, settings.screen_height.unwrap_or(1080)) };
 
     let frame = settings.screenshot()?;
 
