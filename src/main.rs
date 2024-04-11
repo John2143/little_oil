@@ -3,14 +3,10 @@ use mouse_keyboard_input::{key_codes, Button, VirtualDevice};
 //use inputbot::KeybdKey;
 use rand::Rng;
 use tracing::{debug, info, trace};
-use uinput::event::absolute::Position;
-use uinput::event::controller::Mouse;
-use uinput::event::Controller;
 use wayland_client::protocol::wl_registry;
 use wayland_client::Connection;
 
 use std::io::{self, BufRead, Cursor};
-use std::path::Path;
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
