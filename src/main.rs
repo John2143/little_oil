@@ -1,3 +1,4 @@
+use anyhow::bail;
 use mouse_keyboard_input::{key_codes, Button, VirtualDevice};
 //use inputbot::KeybdKey;
 use rand::Rng;
@@ -27,6 +28,24 @@ pub struct Settings {
     div_delay: u64,
     inv_colors: Option<Vec<u32>>,
     screen_height: Option<u32>,
+    screenshot_method: ScreenshotMethod,
+}
+
+impl Settings {
+    fn screenshot(&self) -> anyhow::Result<ScreenshotData> {
+        match self.screenshot_method {
+            ScreenshotMethod::Grim => take_screenshot_grim(),
+            ScreenshotMethod::Scrot => take_screenshot_scrap(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ScreenshotMethod {
+    /// Wayland users should use an external program like "grim"
+    Grim,
+    /// Windows and Linux users can use scrot
+    Scrot,
 }
 
 use std::fs;
@@ -39,6 +58,7 @@ static DEFAULT_SETTINGS: Settings = Settings {
     div_delay: 100,
     inv_colors: None,
     screen_height: None,
+    screenshot_method: ScreenshotMethod::Scrot,
 };
 
 static SETTINGS: Lazy<RwLock<Settings>> = Lazy::new(|| RwLock::new(DEFAULT_SETTINGS.clone()));
@@ -52,7 +72,7 @@ pub fn save_config<T: Serialize>(path: &str, set: &T) -> Result<(), std::io::Err
     Ok(())
 }
 
-fn load_config<T>(path: &str, default: Option<&T>) -> Result<T, String>
+fn load_config<T>(path: &str, default: Option<&T>) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned + Serialize + Clone,
 {
@@ -60,22 +80,22 @@ where
         Ok(mut f) => {
             let mut config_text = String::new();
             if let Err(msg) = f.read_to_string(&mut config_text) {
-                return Err(format!("Could not read settings: {}", msg));
+                bail!("Could not read settings: {}", msg);
             }
 
             let x = serde_json::from_str(&config_text);
 
             match x {
                 Ok(settings) => Ok(settings),
-                Err(msg) => Err(format!("Could not parse settings: {}", msg)),
+                Err(msg) => bail!("Could not parse settings: {}", msg),
             }
         }
         Err(_f) => match default {
             Some(obj) => match save_config(&path, &obj) {
                 Ok(_) => Ok(obj.clone()),
-                Err(e) => Err(format!("Could not write defualt settings: {}", e)),
+                Err(e) => bail!("Could not write defualt settings: {}", e),
             },
-            None => Err(format!("File not found and no default given")),
+            None => bail!("File not found and no default given"),
         },
     }
 }
@@ -100,7 +120,7 @@ impl wayland_client::Dispatch<wl_registry::WlRegistry, ()> for AppData {
 }
 
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     tracing::info!("Starting main loop");
 
@@ -117,13 +137,7 @@ fn main() {
     //event_queue.blocking_dispatch(&mut dat);
 
     let mut _rand = rand::thread_rng();
-    let set = match load_config(CONFIG_PATH, Some(&DEFAULT_SETTINGS)) {
-        Ok(s) => s,
-        Err(s) => {
-            println!("Config load failed {}", s);
-            return;
-        }
-    };
+    let set = load_config(CONFIG_PATH, Some(&DEFAULT_SETTINGS))?;
 
     *SETTINGS.write().unwrap() = set;
 
@@ -139,12 +153,10 @@ fn main() {
                 .unwrap_or(Ok(40))
                 .expect("invalid number");
 
-            sort_quad(times);
-            return;
+            return sort_quad(times);
         }
         Some("empty") => {
-            empty_inv();
-            return;
+            return empty_inv();
         }
         Some("roll") => {
             let file = args.get(1).expect("missing name to roll");
@@ -155,34 +167,25 @@ fn main() {
                 .expect("invalid number");
 
             auto_roll::auto_roll(&file, times);
-            return;
+            return Ok(());
         }
         Some("reset_inv") => {
-            reset_inv_colors();
-            return;
+            return reset_inv_colors();
         }
         Some("chance") => {
-            chance();
-            return;
-        }
-        Some("get") => {
-            move_mouse(1920 + 100, 100);
-            return;
+            return chance();
         }
         Some("tally") => {
             let settings = SETTINGS.read().unwrap();
             let c = match settings.chaos_recipe_settings.clone() {
                 Some(s) => s,
-                None => {
-                    println!("No chaos recipe config found");
-                    return;
-                }
+                None => bail!("No chaos recipe config found"),
             };
 
             drop(settings);
 
             chaos_recipe::get_tally(&c);
-            return;
+            return Ok(())
         }
         Some("chaos") => {
             let amt: usize = args
@@ -195,19 +198,18 @@ fn main() {
             let c = match settings.chaos_recipe_settings.clone() {
                 Some(s) => s,
                 None => {
-                    println!("No chaos recipe config found");
-                    return;
+                    bail!("No chaos recipe config found");
                 }
             };
 
             drop(settings);
 
             chaos_recipe::do_recipe(&c, amt);
-            return;
+            return Ok(());
         }
         Some(n) => {
             println!("Invalid command: {}", n);
-            return;
+            return Ok(());
         }
 
         None => {}
@@ -234,6 +236,7 @@ fn main() {
 
     //inputs.join().unwrap();
     cmdline.join().unwrap();
+    Ok(())
 }
 
 fn split_space(input: &str) -> (&str, &str) {
@@ -279,7 +282,7 @@ fn read_item_on_cursor() -> String {
     }
 }
 
-fn chance() {
+fn chance() -> anyhow::Result<()> {
     let chance = (237, 292);
     let scour = (169, 472);
     let slot = (323, 522);
@@ -297,6 +300,8 @@ fn chance() {
         click(slot.0, slot.1);
         std::thread::sleep(std::time::Duration::from_millis(sleep_read));
     }
+
+    Ok(())
 }
 
 static HELP: &str = r#"
@@ -439,7 +444,7 @@ use std::sync::{Mutex, RwLock};
 use crate::auto_roll::AutoRollConfig;
 use crate::auto_roll::AutoRollMod;
 
-fn reset_inv_colors() {
+fn reset_inv_colors() -> anyhow::Result<()> {
     let settings = SETTINGS.read().unwrap();
     let height = settings.screen_height.unwrap_or(1080);
     drop(settings);
@@ -466,10 +471,7 @@ fn reset_inv_colors() {
 
     //click(618, 618);
 
-    let frame = match take_screenshot() {
-        Ok(frame) => frame,
-        Err(()) => return (),
-    };
+    let frame = settings.screenshot()?;
 
     let mut colors = Vec::with_capacity(60);
     colors.resize(60, 0);
@@ -489,10 +491,11 @@ fn reset_inv_colors() {
     settings.inv_colors = Some(colors);
     dbg!("ok");
 
-    save_config(CONFIG_PATH, &*settings).unwrap();
+    save_config(CONFIG_PATH, &*settings)?;
+    Ok(())
 }
 
-fn empty_inv_macro(start_slot: u32, delay: u64) {
+fn empty_inv_macro(start_slot: u32, delay: u64) -> anyhow::Result<()> {
     let settings = SETTINGS.read().unwrap();
     let height = settings.screen_height.unwrap_or(1080);
 
@@ -516,10 +519,8 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
         panic!("invalid screen size");
     };
 
-    let frame = match take_screenshot() {
-        Ok(frame) => frame,
-        Err(()) => return (),
-    };
+
+    let frame = settings.screenshot()?;
 
     //TODO make it not allocate
     let default_colors = {
@@ -553,10 +554,11 @@ fn empty_inv_macro(start_slot: u32, delay: u64) {
         }
     }
 
+    Ok(())
     //move_mouse(655, 801);
 }
 
-fn empty_inv() {
+fn empty_inv() -> anyhow::Result<()> {
     let delay = { SETTINGS.read().unwrap().push_delay };
 
     println!("empty inv (delay {})", delay);
@@ -564,7 +566,7 @@ fn empty_inv() {
     let slot = 0;
 
     std::thread::sleep(std::time::Duration::from_millis(500));
-    empty_inv_macro(slot, delay);
+    return empty_inv_macro(slot, delay);
     //empty_inv_macro(slot, delay);
 }
 
@@ -574,16 +576,7 @@ pub struct ScreenshotData {
     pixels: Vec<u8>,
 }
 
-fn take_screenshot() -> Result<ScreenshotData, ()> {
-    // TODO
-    if false {
-        return take_screenshot_scrap();
-    } else {
-        return take_screenshot_grim();
-    }
-}
-
-pub fn take_screenshot_grim() -> Result<ScreenshotData, ()> {
+pub fn take_screenshot_grim() -> anyhow::Result<ScreenshotData> {
     let cmd = Command::new("grim")
         // whole left screen
         .arg("-g")
@@ -612,7 +605,7 @@ pub fn take_screenshot_grim() -> Result<ScreenshotData, ()> {
     })
 }
 
-pub fn take_screenshot_scrap() -> Result<ScreenshotData, ()> {
+pub fn take_screenshot_scrap() -> anyhow::Result<ScreenshotData> {
     println!("taking screenshot...");
     let disp = scrap::Display::primary().unwrap();
     //let disps = scrap::Display::all().unwrap();
@@ -674,18 +667,17 @@ impl ScreenshotData {
     }
 }
 
-fn sort_quad(times: u32) {
+fn sort_quad(times: u32) -> anyhow::Result<()> {
     std::thread::sleep(std::time::Duration::from_millis(300));
 
+    let settings = SETTINGS.read().unwrap();
     let (delay, height) = {
-        let settings = SETTINGS.read().unwrap();
         (settings.pull_delay, settings.screen_height.unwrap_or(1080))
     };
 
-    let frame = match take_screenshot() {
-        Ok(frame) => frame,
-        Err(()) => return (),
-    };
+    let frame = settings.screenshot()?;
+
+    drop(settings);
 
     println!("take tab (delay {})", delay);
 
@@ -766,6 +758,7 @@ fn sort_quad(times: u32) {
         }
     }
 
+    Ok(())
     //use std::convert::TryInto;
     //image::save_buffer(
     //"./image2.png",
