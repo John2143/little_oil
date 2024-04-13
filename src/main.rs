@@ -7,6 +7,7 @@ use wayland_client::protocol::wl_registry;
 use wayland_client::Connection;
 
 use std::io::{self, BufRead, Cursor};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
@@ -80,18 +81,24 @@ static DEFAULT_SETTINGS: Settings = Settings {
 
 static SETTINGS: Lazy<RwLock<Settings>> = Lazy::new(|| RwLock::new(DEFAULT_SETTINGS.clone()));
 
-static CONFIG_PATH: &str = "/home/john/little_oil/config.json";
+pub fn get_config_path() -> PathBuf {
+    let mut con = dirs::config_dir().unwrap();
+    con.push("little_oil.json");
+    con
+}
 
-pub fn save_config<T: Serialize>(path: &str, set: &T) -> Result<(), std::io::Error> {
+pub fn save_config<T: Serialize, P: AsRef<Path>>(path: P, set: &T) -> Result<(), std::io::Error> {
     let mut file = fs::File::create(&path)?;
+    //dirs::
     file.write_all(serde_json::to_string_pretty(&set).unwrap().as_bytes())?;
 
     Ok(())
 }
 
-fn load_config<T>(path: &str, default: Option<&T>) -> anyhow::Result<T>
+fn load_config<T, P>(path: P, default: Option<&T>) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned + Serialize + Clone,
+    P: AsRef<Path>,
 {
     match fs::File::open(&path) {
         Ok(mut f) => {
@@ -159,7 +166,7 @@ fn main() -> anyhow::Result<()> {
     //event_queue.blocking_dispatch(&mut dat);
 
     let mut _rand = rand::thread_rng();
-    let set = load_config(CONFIG_PATH, Some(&DEFAULT_SETTINGS))?;
+    let set = load_config(get_config_path(), Some(&DEFAULT_SETTINGS))?;
 
     *SETTINGS.write().unwrap() = set;
 
@@ -357,7 +364,7 @@ fn command_line() {
                     Ok(x) => {
                         let mut s = SETTINGS.write().unwrap();
                         s.pull_delay = x;
-                        save_config(CONFIG_PATH, &*s).unwrap();
+                        save_config(get_config_path(), &*s).unwrap();
                     }
                     Err(_) => println!("could not delay"),
                 }
@@ -509,7 +516,7 @@ fn reset_inv_colors() -> anyhow::Result<()> {
     settings.inv_colors = Some(colors);
     dbg!("ok");
 
-    save_config(CONFIG_PATH, &*settings)?;
+    save_config(get_config_path(), &*settings)?;
     Ok(())
 }
 

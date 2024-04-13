@@ -206,7 +206,7 @@ impl ChaosRecipe {
                     .chaos_recipe_settings
                     .as_mut()
                     .map(|s| s.tab_index = Some(tab.i));
-                crate::save_config(crate::CONFIG_PATH, &*settings).unwrap();
+                crate::save_config(crate::get_config_path(), &*settings).unwrap();
                 println!("writing config {:?}", settings);
 
                 let mut newc = self.clone();
