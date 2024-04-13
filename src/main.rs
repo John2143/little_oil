@@ -142,6 +142,7 @@ impl wayland_client::Dispatch<wl_registry::WlRegistry, ()> for AppData {
 }
 
 fn main() -> anyhow::Result<()> {
+    FAKE_DEVICE.lock().unwrap().synchronize();
     tracing_subscriber::fmt::init();
     tracing::info!("Starting main loop");
 
@@ -568,8 +569,6 @@ fn empty_inv_macro(settings: &Settings, start_slot: u32, delay: u64) -> anyhow::
 }
 
 fn empty_inv(settings: &Settings) -> anyhow::Result<()> {
-    let delay = { SETTINGS.read().unwrap().push_delay };
-
     println!("empty inv (delay {})", settings.push_delay);
     //let slot = if KeybdKey::NumLockKey.is_toggled() { 5 } else { 0 };
     let slot = 0;
