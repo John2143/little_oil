@@ -25,6 +25,7 @@ pub struct Settings {
     inv_colors: Option<Vec<u32>>,
     screen_height: Option<u32>,
     screenshot_method: ScreenshotMethod,
+    pos: InvPositions,
 }
 
 impl Settings {
@@ -34,6 +35,17 @@ impl Settings {
             ScreenshotMethod::Scrot => take_screenshot_scrap(),
         }
     }
+}
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct InvPositions {
+    alt: (u32, u32),
+    aug: (u32, u32),
+    scour: (u32, u32),
+    regal: (u32, u32),
+    annul: (u32, u32),
+    transmute: (u32, u32),
+
+    inv: (u32, u32),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -53,8 +65,17 @@ static DEFAULT_SETTINGS: Settings = Settings {
     push_delay: 40,
     div_delay: 100,
     inv_colors: None,
-    screen_height: None,
+    screen_height: Some(1440),
     screenshot_method: ScreenshotMethod::Scrot,
+    pos: InvPositions {
+        alt: (149, 368),
+        aug: (303, 444),
+        scour: (580, 688),
+        regal: (579, 365),
+        annul: (226, 372),
+        transmute: (71, 368),
+        inv: (1713, 828),
+    }
 };
 
 static SETTINGS: Lazy<RwLock<Settings>> = Lazy::new(|| RwLock::new(DEFAULT_SETTINGS.clone()));
@@ -145,6 +166,11 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     match args.get(0).map(|x| &**x) {
+        Some("config") => {
+            let s = serde_json::to_string(&DEFAULT_SETTINGS).unwrap();
+            println!("{}", s);
+            return Ok(())
+        }
         Some("sort") => {
             dbg!(&args);
             let times = args
@@ -156,7 +182,7 @@ fn main() -> anyhow::Result<()> {
             return sort_quad(times);
         }
         Some("empty") => {
-            return empty_inv();
+            return empty_inv(&SETTINGS.read().unwrap());
         }
         Some("roll") => {
             let file = args.get(1).expect("missing name to roll");
@@ -166,7 +192,7 @@ fn main() -> anyhow::Result<()> {
                 .parse()
                 .expect("invalid number");
 
-            auto_roll::auto_roll(&file, times);
+            auto_roll::auto_roll(&SETTINGS.read().unwrap(), &file, times);
             return Ok(());
         }
         Some("reset_inv") => {
@@ -361,7 +387,7 @@ fn command_line() {
                 let (file, times) = split_space(rest);
                 println!("Loading chrome file {}", file);
 
-                match auto_roll::auto_roll(&file, times.parse().unwrap()) {
+                match auto_roll::auto_roll(&SETTINGS.read().unwrap(), &file, times.parse().unwrap()) {
                     None => println!("failed to roll"),
                     Some(res) => {
                         println!("{:?}", res);
@@ -431,8 +457,7 @@ fn click_release(m: Button) {
 fn move_mouse(x: i32, y: i32) {
     trace!(x, y, "mouse_move");
     let mut device = FAKE_DEVICE.lock().unwrap();
-    device.move_mouse(-5000, -5000).unwrap();
-    device.move_mouse(x, y).unwrap();
+    device.move_mouse_abs((x as f32 * 1.3) as _, (y as f32 * 1.3) as _).unwrap();
     //device.synchronize().unwrap();
     std::thread::sleep(std::time::Duration::from_millis(10));
 }
@@ -494,20 +519,10 @@ fn reset_inv_colors() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn empty_inv_macro(start_slot: u32, delay: u64) -> anyhow::Result<()> {
-    let settings = SETTINGS.read().unwrap();
+fn empty_inv_macro(settings: &Settings, start_slot: u32, delay: u64) -> anyhow::Result<()> {
     let height = settings.screen_height.unwrap_or(1080);
 
-    let inv_loc = if height == 1080 {
-        (1311, 626)
-    } else if height == 1440 {
-        (1713, 834)
-    } else if height == 1000 {
-        (1915, 591)
-    } else {
-        panic!("invalid screen size");
-    };
-
+    let inv_loc = settings.pos.inv;
     let inv_delta = if height == 1080 {
         53
     } else if height == 1440 {
@@ -517,6 +532,8 @@ fn empty_inv_macro(start_slot: u32, delay: u64) -> anyhow::Result<()> {
     } else {
         panic!("invalid screen size");
     };
+
+    info!(height, x = inv_loc.0, y = inv_loc.1, inv_delta, "Emptying inv");
 
     let frame = settings.screenshot()?;
 
@@ -544,7 +561,7 @@ fn empty_inv_macro(start_slot: u32, delay: u64) -> anyhow::Result<()> {
                     (y * inv_delta + inv_loc.1) as i32,
                 );
 
-                info!(x, y, "clicking inv");
+                debug!(x, y, "clicking inv");
 
                 click(rx, ry);
                 std::thread::sleep(std::time::Duration::from_millis(delay));
@@ -556,15 +573,15 @@ fn empty_inv_macro(start_slot: u32, delay: u64) -> anyhow::Result<()> {
     //move_mouse(655, 801);
 }
 
-fn empty_inv() -> anyhow::Result<()> {
+fn empty_inv(settings: &Settings) -> anyhow::Result<()> {
     let delay = { SETTINGS.read().unwrap().push_delay };
 
-    println!("empty inv (delay {})", delay);
+    println!("empty inv (delay {})", settings.push_delay);
     //let slot = if KeybdKey::NumLockKey.is_toggled() { 5 } else { 0 };
     let slot = 0;
 
     std::thread::sleep(std::time::Duration::from_millis(500));
-    return empty_inv_macro(slot, delay);
+    return empty_inv_macro(&settings, slot, settings.push_delay);
     //empty_inv_macro(slot, delay);
 }
 

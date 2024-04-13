@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{click, click_right, load_config, read_item_on_cursor};
+use crate::{click, click_right, load_config, read_item_on_cursor, Settings};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AutoRollMod {
@@ -32,7 +32,7 @@ pub struct RollResult {
     has_mod: bool,
 }
 
-pub fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
+pub fn auto_roll(settings: &Settings, path: &str, times: i64) -> Option<RollResult> {
     #![allow(unused_variables)]
     let alt = (155, 354);
     let aug = (300, 422);
@@ -69,7 +69,7 @@ pub fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
         println!("alt");
         let item = read_item_on_cursor();
         res = check_roll(&item, &config);
-        if res.has_mod {
+        if true || res.has_mod {
             println!("got mod");
             break;
         }
