@@ -457,7 +457,8 @@ fn click_release(m: Button) {
 fn move_mouse(x: i32, y: i32) {
     trace!(x, y, "mouse_move");
     let mut device = FAKE_DEVICE.lock().unwrap();
-    device.move_mouse_abs((x as f32 * 1.3) as _, (y as f32 * 1.3) as _).unwrap();
+    device.move_mouse(-5000, -5000).unwrap();
+    device.move_mouse((x as f32 * 1.25) as _, (y as f32 * 1.25) as _).unwrap();
     //device.synchronize().unwrap();
     std::thread::sleep(std::time::Duration::from_millis(10));
 }
@@ -472,15 +473,7 @@ fn reset_inv_colors() -> anyhow::Result<()> {
     let settings = SETTINGS.read().unwrap();
     let height = settings.screen_height.unwrap_or(1080);
 
-    let inv_loc = if height == 1080 {
-        (1311, 626)
-    } else if height == 1440 {
-        (1713, 834)
-    } else if height == 1000 {
-        (1915, 591)
-    } else {
-        panic!("invalid screen size");
-    };
+    let inv_loc = settings.pos.inv;
 
     let inv_delta = if height == 1080 {
         53
@@ -567,6 +560,7 @@ fn empty_inv_macro(settings: &Settings, start_slot: u32, delay: u64) -> anyhow::
                 std::thread::sleep(std::time::Duration::from_millis(delay));
             }
         }
+        //return Ok(());
     }
 
     Ok(())
