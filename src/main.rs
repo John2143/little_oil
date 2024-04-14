@@ -6,9 +6,7 @@ use rand::Rng;
 use screenshot::ScreenshotData;
 use tracing::{debug, info, trace};
 
-use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
@@ -373,7 +371,6 @@ mod mouse {
     }
 
     pub fn init() {
-        FAKE_DEVICE;
     }
 
     pub fn click(x: i32, y: i32) {
@@ -397,7 +394,7 @@ mod mouse {
 
     pub fn move_mouse(x: i32, y: i32) {
         trace!(x, y, "mouse_move");
-        dbg!(FAKE_DEVICE);
+        let d = *FAKE_DEVICE;
 
         //device.synchronize().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(10));

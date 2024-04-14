@@ -1,7 +1,5 @@
-use anyhow::{bail, Context};
-use tracing::{debug, info, trace};
-use std::io::Cursor;
-use std::process::Command;
+use anyhow::{bail};
+use tracing::{debug, trace, info};
 
 use crate::Settings;
 
@@ -52,18 +50,20 @@ pub fn take_screenshot_grim(settings: &Settings) -> anyhow::Result<ScreenshotDat
 
 #[cfg(feature = "input_x")]
 pub fn take_screenshot_scrap(settings: &Settings) -> anyhow::Result<ScreenshotData> {
-    debug!("taking screenshot...");
+    trace!(?settings, "taking screenshot...");
     let disp = scrap::Display::primary().unwrap();
-    //let disps = scrap::Display::all().unwrap();
     let mut cap = scrap::Capturer::new(disp).unwrap();
-    //for disp in disps.into_iter().skip(2) {
-    //cap = scrap::Capturer::new(disp).unwrap();
-    //println!("doing cap");
-    //break;
-    //}
+
+    let disps = scrap::Display::all().unwrap();
+    for disp in disps.into_iter() {
+        cap = scrap::Capturer::new(disp).unwrap();
+        info!("Cap");
+    }
 
     let width = cap.width();
     let height = cap.height();
+
+    info!(width, height, "Taking a screenshot on this monitor using Display::primary()");
 
     let sleep = 50;
 
