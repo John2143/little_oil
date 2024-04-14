@@ -1,5 +1,5 @@
-use anyhow::{bail};
-use tracing::{debug, trace, info};
+use anyhow::bail;
+use tracing::{debug, info, trace};
 
 use crate::Settings;
 
@@ -49,21 +49,27 @@ pub fn take_screenshot_grim(settings: &Settings) -> anyhow::Result<ScreenshotDat
 }
 
 #[cfg(feature = "input_x")]
-pub fn take_screenshot_scrap(settings: &Settings) -> anyhow::Result<ScreenshotData> {
+pub fn take_screenshot_scrap(
+    settings: &Settings,
+    monitor_index: usize,
+) -> anyhow::Result<ScreenshotData> {
+    use anyhow::Context;
+
     trace!(?settings, "taking screenshot...");
-    let disp = scrap::Display::primary().unwrap();
+
+    // Get a handle to the display throgh scrap
+    let disps = scrap::Display::all()?;
+    let disp = disps.into_iter().nth(monitor_index).with_context(|| {
+        format!("monitor index of {monitor_index} is out of bounds for this GPU.")
+    })?;
     let mut cap = scrap::Capturer::new(disp).unwrap();
-
-    let disps = scrap::Display::all().unwrap();
-    for disp in disps.into_iter() {
-        cap = scrap::Capturer::new(disp).unwrap();
-        info!("Cap");
-    }
-
     let width = cap.width();
     let height = cap.height();
 
-    info!(width, height, "Taking a screenshot on this monitor using Display::primary()");
+    info!(
+        width,
+        height, "Taking a screenshot on this monitor using Display::primary()"
+    );
 
     let sleep = 50;
 
@@ -112,4 +118,3 @@ impl ScreenshotData {
         }
     }
 }
-
