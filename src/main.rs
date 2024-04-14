@@ -234,10 +234,10 @@ impl CliCommand {
                 Ok(())
             }
             CliCommand::Sort { times } => {
-                sort_quad(settings, *times)
+                actions::sort_quad(settings, *times)
             }
             CliCommand::Empty => {
-                empty_inv(settings)
+                actions::empty_inv(settings)
             }
             CliCommand::Roll {
                 times,
@@ -251,10 +251,10 @@ impl CliCommand {
                 Ok(())
             }
             CliCommand::ResetInv => {
-                reset_inv_colors(settings)
+                actions::reset_inv_colors(settings)
             }
             CliCommand::Chance => {
-                chance()
+                actions::chance()
             }
             CliCommand::Tally => {
                 let c = match settings.chaos_recipe_settings.clone() {
@@ -266,12 +266,7 @@ impl CliCommand {
                 Ok(())
             }
             CliCommand::Chaos => {
-                //let amt: usize = args
-                //.get(1)
-                //.unwrap_or(&"1".to_string())
-                //.parse()
-                //.expect("Invalid number of recipes, try 1 or 2");
-                let amt = 1;
+                let amt = 1; // TODO
 
                 let settings = SETTINGS.read().unwrap();
                 let c = match settings.chaos_recipe_settings.clone() {

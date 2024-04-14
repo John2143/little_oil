@@ -97,7 +97,7 @@ fn empty_inv_macro(settings: &Settings, start_slot: u32, delay: u64) -> anyhow::
 
                 debug!(x, y, "clicking inv");
 
-                mouse::click(rx, ry);
+                click(rx, ry);
                 std::thread::sleep(std::time::Duration::from_millis(delay));
             }
         }
@@ -108,7 +108,7 @@ fn empty_inv_macro(settings: &Settings, start_slot: u32, delay: u64) -> anyhow::
     //move_mouse(655, 801);
 }
 
-fn empty_inv(settings: &Settings) -> anyhow::Result<()> {
+pub fn empty_inv(settings: &Settings) -> anyhow::Result<()> {
     info!(settings.push_delay, "empty inv");
     //let slot = if KeybdKey::NumLockKey.is_toggled() { 5 } else { 0 };
     let slot = 0;
@@ -118,7 +118,7 @@ fn empty_inv(settings: &Settings) -> anyhow::Result<()> {
     //empty_inv_macro(slot, delay);
 }
 
-fn sort_quad(settings: &Settings, times: usize) -> anyhow::Result<()> {
+pub fn sort_quad(settings: &Settings, times: usize) -> anyhow::Result<()> {
     std::thread::sleep(std::time::Duration::from_millis(300));
 
     let (delay, height) = { (settings.pull_delay, settings.poe_window_location.height) };
