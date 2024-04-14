@@ -1,21 +1,21 @@
 use anyhow::{bail, Context};
 use clap::Parser;
 use mouse::{click, click_right};
+use once_cell::sync::Lazy;
 use rand::Rng;
 use screenshot::ScreenshotData;
-use tracing::{info, trace};
-use once_cell::sync::Lazy;
-use std::sync::RwLock;
-use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use std::sync::RwLock;
+use tracing::{info, trace};
 
+mod actions;
 mod auto_roll;
 mod chaos_recipe;
 mod dicts;
 pub mod item;
 pub mod mouse;
 mod screenshot;
-mod actions;
 
 /// This file is loaded from your config directory (`$HOME/.config/little_oil.json`)
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -233,12 +233,8 @@ impl CliCommand {
                 println!("{}", s);
                 Ok(())
             }
-            CliCommand::Sort { times } => {
-                actions::sort_quad(settings, *times)
-            }
-            CliCommand::Empty => {
-                actions::empty_inv(settings)
-            }
+            CliCommand::Sort { times } => actions::sort_quad(settings, *times),
+            CliCommand::Empty => actions::empty_inv(settings),
             CliCommand::Roll {
                 times,
                 config: target_item_config,
@@ -250,12 +246,8 @@ impl CliCommand {
                 info!(?roll_res);
                 Ok(())
             }
-            CliCommand::ResetInv => {
-                actions::reset_inv_colors(settings)
-            }
-            CliCommand::Chance => {
-                actions::chance()
-            }
+            CliCommand::ResetInv => actions::reset_inv_colors(settings),
+            CliCommand::Chance => actions::chance(),
             CliCommand::Tally => {
                 let c = match settings.chaos_recipe_settings.clone() {
                     Some(s) => s,
@@ -332,4 +324,3 @@ fn read_item_on_cursor() -> String {
         std::thread::sleep(std::time::Duration::from_millis(trng.gen_range(1..150)));
     }
 }
-

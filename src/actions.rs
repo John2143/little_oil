@@ -1,7 +1,7 @@
 //!This file contains all the different things that little oil can do, like empty your inventory,
 //!pull items out of your stash, or roll items.
-use anyhow::{Context};
 use crate::mouse::{click, click_right};
+use anyhow::Context;
 use tracing::{debug, info, trace};
 
 use crate::{Settings, SETTINGS};

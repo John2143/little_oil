@@ -112,7 +112,8 @@ pub fn auto_roll(settings: &Settings, config: &AutoRollConfig, times: usize) -> 
 
 fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
     let maybe_name = item_text
-        .lines().find(|s| s.contains(&config.item_name))
+        .lines()
+        .find(|s| s.contains(&config.item_name))
         .unwrap();
 
     dbg!(&item_text.lines().collect::<Vec<_>>()[8..]);
