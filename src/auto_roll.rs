@@ -58,7 +58,7 @@ pub fn auto_roll(settings: &Settings, config: &AutoRollConfig, times: usize) -> 
 
         println!("alt");
         let item = read_item_on_cursor();
-        res = check_roll(&item, &config);
+        res = check_roll(&item, config);
         if true || res.has_mod {
             println!("got mod");
             break;
@@ -73,7 +73,7 @@ pub fn auto_roll(settings: &Settings, config: &AutoRollConfig, times: usize) -> 
             click(slot.0, slot.1);
             std::thread::sleep(std::time::Duration::from_millis(sleep_read));
 
-            res = check_roll(&read_item_on_cursor(), &config);
+            res = check_roll(&read_item_on_cursor(), config);
             if res.has_mod {
                 break;
             }
@@ -102,7 +102,7 @@ pub fn auto_roll(settings: &Settings, config: &AutoRollConfig, times: usize) -> 
         click(slot.0, slot.1);
         std::thread::sleep(std::time::Duration::from_millis(sleep_read));
 
-        res = check_roll(&read_item_on_cursor(), &config);
+        res = check_roll(&read_item_on_cursor(), config);
     }
 
     Some(res)
@@ -110,9 +110,7 @@ pub fn auto_roll(settings: &Settings, config: &AutoRollConfig, times: usize) -> 
 
 fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
     let maybe_name = item_text
-        .lines()
-        .filter(|s| s.contains(&config.item_name))
-        .nth(0)
+        .lines().find(|s| s.contains(&config.item_name))
         .unwrap();
 
     dbg!(&item_text.lines().collect::<Vec<_>>()[8..]);
@@ -124,6 +122,6 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
             .mods
             .iter()
             .map(|x| x.name.as_str())
-            .any(|x| item_text.to_lowercase().contains(&x)),
+            .any(|x| item_text.to_lowercase().contains(x)),
     }
 }

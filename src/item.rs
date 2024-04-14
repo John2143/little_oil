@@ -192,7 +192,7 @@ impl<'a> Item<'a> {
                         if line_iterator
                             .peek()
                             .context("nothing after separator")?
-                            .starts_with("{")
+                            .starts_with('{')
                         {
                             debug!("Moving to next state");
                             cur_parser_state = ItemParseSections::ItemMods;
@@ -214,7 +214,7 @@ impl<'a> Item<'a> {
                         mods.push(item_mod);
                         current_parsed_modline = None;
                     // If the line starts with `{`, then it is a mod
-                    } else if line.starts_with("{") {
+                    } else if line.starts_with('{') {
                         debug!("Got first modline...");
                         current_parsed_modline = Some(line);
                         continue;

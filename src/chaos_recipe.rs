@@ -149,8 +149,7 @@ impl Item {
         for prop in props {
             let hasaps = prop
                 .get("name")
-                .map(|name| name.as_str())
-                .flatten()
+                .and_then(|name| name.as_str())
                 .map(|name| name == "Attacks per Second");
 
             if hasaps == Some(true) {

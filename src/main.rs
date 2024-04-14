@@ -63,7 +63,7 @@ impl Settings {
             ScreenshotMethod::Grim => screenshot::take_screenshot_grim(&self),
             #[cfg(feature = "input_x")]
             ScreenshotMethod::Scrot { primary_monitor } => {
-                screenshot::take_screenshot_scrap(&self, primary_monitor)
+                screenshot::take_screenshot_scrap(self, primary_monitor)
             }
             ScreenshotMethod::None => bail!("No screenshot method defined. check your config!"),
         }
@@ -78,7 +78,7 @@ impl Settings {
         // Infer from screen height
         let height = self.poe_window_location.height;
         if height == 1080 {
-            return 53;
+            53
         } else if height == 1440 {
             return 70;
         } else if height == 1000 {
@@ -230,13 +230,13 @@ impl CliCommand {
             CliCommand::PrintConfig => {
                 let s = serde_json::to_string(&DEFAULT_SETTINGS).unwrap();
                 println!("{}", s);
-                return Ok(());
+                Ok(())
             }
             CliCommand::Sort { times } => {
-                return sort_quad(&settings, *times);
+                sort_quad(settings, *times)
             }
             CliCommand::Empty => {
-                return empty_inv(&settings);
+                empty_inv(settings)
             }
             CliCommand::Roll {
                 times,
@@ -245,15 +245,15 @@ impl CliCommand {
                 let ar_config: auto_roll::AutoRollConfig =
                     load_config(target_item_config, None).context("Loading auto_roll_config")?;
 
-                let roll_res = auto_roll::auto_roll(&settings, &ar_config, *times);
+                let roll_res = auto_roll::auto_roll(settings, &ar_config, *times);
                 info!(?roll_res);
-                return Ok(());
+                Ok(())
             }
             CliCommand::ResetInv => {
-                return reset_inv_colors(&settings);
+                reset_inv_colors(settings)
             }
             CliCommand::Chance => {
-                return chance();
+                chance()
             }
             CliCommand::Tally => {
                 let c = match settings.chaos_recipe_settings.clone() {
@@ -262,7 +262,7 @@ impl CliCommand {
                 };
 
                 chaos_recipe::get_tally(&c);
-                return Ok(());
+                Ok(())
             }
             CliCommand::Chaos => {
                 //let amt: usize = args
@@ -281,7 +281,7 @@ impl CliCommand {
                 };
 
                 chaos_recipe::do_recipe(&c, amt);
-                return Ok(());
+                Ok(())
             }
         }
     }
@@ -325,7 +325,7 @@ fn read_item_on_cursor() -> String {
             std::thread::sleep(std::time::Duration::from_millis(5));
             match safectx.get_contents() {
                 Ok(s) => {
-                    if s != "" {
+                    if !s.is_empty() {
                         return s;
                     }
                 }
@@ -440,7 +440,7 @@ fn empty_inv(settings: &Settings) -> anyhow::Result<()> {
     let slot = 0;
 
     std::thread::sleep(std::time::Duration::from_millis(500));
-    return empty_inv_macro(&settings, slot, settings.push_delay);
+    empty_inv_macro(settings, slot, settings.push_delay)
     //empty_inv_macro(slot, delay);
 }
 
