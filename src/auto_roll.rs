@@ -1,3 +1,5 @@
+//![`auto_roll`] can use alts, augs and regals on an item to get specific stats. This is the v1
+//!item system.
 use serde::{Deserialize, Serialize};
 
 use crate::{click, click_right, read_item_on_cursor, Settings};
