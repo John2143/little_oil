@@ -1,3 +1,4 @@
+#![allow(unused)] //TODO
 use std::{fmt::Display, ops::Range};
 
 use anyhow::Context;
@@ -65,18 +66,18 @@ impl<'a> Display for ItemName {
 #[derive(Debug)]
 pub struct ItemMod<'a> {
     /// prefix, suffix, unique
-    affix_type: AffixType,
+    pub affix_type: AffixType,
 
     /// Contains the tier if it's a rare mod
-    affix_name_tier: Option<AffixNameTier<'a>>,
+    pub affix_name_tier: Option<AffixNameTier<'a>>,
 
-    value: Option<Decimal>,
-    roll_range: Option<Range<Decimal>>,
+    pub value: Option<Decimal>,
+    pub roll_range: Option<Range<Decimal>>,
 
     /// Tags for catalysts: things like Defenses, Evasion, Fire
-    tags: Vec<&'a str>,
+    pub tags: Vec<&'a str>,
     /// is fractured, etc
-    mod_qualifiers: &'a str,
+    pub mod_qualifiers: &'a str,
 }
 
 #[non_exhaustive]
@@ -192,7 +193,7 @@ impl<'a> Item<'a> {
                         if line_iterator
                             .peek()
                             .context("nothing after separator")?
-                            .starts_with("{")
+                            .starts_with('{')
                         {
                             debug!("Moving to next state");
                             cur_parser_state = ItemParseSections::ItemMods;
@@ -214,7 +215,7 @@ impl<'a> Item<'a> {
                         mods.push(item_mod);
                         current_parsed_modline = None;
                     // If the line starts with `{`, then it is a mod
-                    } else if line.starts_with("{") {
+                    } else if line.starts_with('{') {
                         debug!("Got first modline...");
                         current_parsed_modline = Some(line);
                         continue;

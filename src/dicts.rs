@@ -1,4 +1,4 @@
-pub const BOOTS: &[&'static str] = &[
+pub const BOOTS: &[&str] = &[
     "Iron Greaves",
     "Steel Greaves",
     "Basemetal Treads",
@@ -66,7 +66,7 @@ pub const BOOTS: &[&'static str] = &[
     "Two-Toned Boots",
 ];
 
-pub const HELMETS: &[&'static str] = &[
+pub const HELMETS: &[&str] = &[
     "Iron Hat",
     "Cone Helmet",
     "Barbute Helmet",
@@ -142,7 +142,7 @@ pub const HELMETS: &[&'static str] = &[
     "Blizzard Crown",
 ];
 
-pub const GLOVES: &[&'static str] = &[
+pub const GLOVES: &[&str] = &[
     "Iron Gauntlets",
     "Taxing Gauntlets",
     "Plated Gauntlets",
@@ -209,7 +209,7 @@ pub const GLOVES: &[&'static str] = &[
     "Murder Mitts",
 ];
 
-pub const BODY: &[&'static str] = &[
+pub const BODY: &[&str] = &[
     "Plate Vest",
     "Chestplate",
     "Copper Plate",
