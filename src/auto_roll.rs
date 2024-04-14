@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{click, click_right, load_config, read_item_on_cursor, Settings};
+use crate::{click, click_right, read_item_on_cursor, Settings};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AutoRollMod {

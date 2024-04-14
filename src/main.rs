@@ -1,12 +1,11 @@
 use anyhow::{bail, Context};
 use clap::Parser;
 use mouse::{click, click_right};
-use mouse_keyboard_input::{key_codes, Button, VirtualDevice};
 //use inputbot::KeybdKey;
 use rand::Rng;
 use tracing::{debug, info, trace};
 
-use std::io::{self, BufRead, Cursor};
+use std::io::{Cursor};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
