@@ -1,4 +1,3 @@
-
 #[cfg(feature = "input_wayland")]
 pub use wayland::*;
 #[cfg(all(not(feature = "input_wayland"), feature = "input_x"))]
@@ -6,9 +5,9 @@ pub use x::*;
 
 #[cfg(feature = "input_x")]
 pub(super) mod x {
-    use tracing::trace;
-    use once_cell::sync::Lazy;
     use mouse_rs::types::keys::Keys;
+    use once_cell::sync::Lazy;
+    use tracing::trace;
 
     thread_local! {
         static FAKE_DEVICE: Lazy<mouse_rs::Mouse> = Lazy::new(|| {
@@ -102,4 +101,3 @@ pub(super) mod wayland {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
-

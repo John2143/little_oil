@@ -14,8 +14,8 @@ mod auto_roll;
 mod chaos_recipe;
 mod dicts;
 pub mod item;
-mod screenshot;
 pub mod mouse;
+mod screenshot;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Settings {
@@ -52,7 +52,7 @@ enum InputMethod {
     Uinput,
     #[cfg(feature = "input_x")]
     InputBot,
-    None
+    None,
 }
 
 impl Settings {
@@ -62,7 +62,9 @@ impl Settings {
             #[cfg(feature = "input_wayland")]
             ScreenshotMethod::Grim => screenshot::take_screenshot_grim(&self),
             #[cfg(feature = "input_x")]
-            ScreenshotMethod::Scrot { primary_monitor } => screenshot::take_screenshot_scrap(&self, primary_monitor),
+            ScreenshotMethod::Scrot { primary_monitor } => {
+                screenshot::take_screenshot_scrap(&self, primary_monitor)
+            }
             ScreenshotMethod::None => bail!("No screenshot method defined. check your config!"),
         }
     }
@@ -107,7 +109,9 @@ pub enum ScreenshotMethod {
     Grim,
     #[cfg(feature = "input_x")]
     /// Windows and Linux users can use scrot
-    Scrot { primary_monitor: usize },
+    Scrot {
+        primary_monitor: usize,
+    },
     None,
 }
 
@@ -455,33 +459,33 @@ fn sort_quad(settings: &Settings, times: usize) -> anyhow::Result<()> {
     //634, 660, 686, 712, 739, 765, //792,
     //];
     let left_edge = if height == 1080 {
-    21
+        21
     } else if height == 1440 {
-    29
+        29
     } else {
-    panic!("invalid screen size");
+        panic!("invalid screen size");
     };
 
     let px = if height == 1080 {
-    (2573 - 1920 - 15) / 24
+        (2573 - 1920 - 15) / 24
     } else if height == 1440 {
-    830 - 795
+        830 - 795
     } else {
-    panic!("invalid screen size");
+        panic!("invalid screen size");
     };
 
     let pys = if height == 1080 {
-    [
-        160, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581,
-        607, 634, 660, 686, 712, 739, 765, //792,
-    ]
+        [
+            160, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581,
+            607, 634, 660, 686, 712, 739, 765, //792,
+        ]
     } else if height == 1440 {
-    [
-        260, 295, 330, 365, 400, 436, 471, 506, 541, 576, 611, 646, 681, 716, 751, 787, 822,
-        857, 892, 927, 962, 997, 1032, 1067,
-    ]
+        [
+            260, 295, 330, 365, 400, 436, 471, 506, 541, 576, 611, 646, 681, 716, 751, 787, 822,
+            857, 892, 927, 962, 997, 1032, 1067,
+        ]
     } else {
-    panic!("invalid screen size");
+        panic!("invalid screen size");
     };
 
     //160, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581, 607,
@@ -490,40 +494,40 @@ fn sort_quad(settings: &Settings, times: usize) -> anyhow::Result<()> {
 
     let mut movesleft = times;
     for y in 0..24 {
-    let ry = pys[y];
+        let ry = pys[y];
 
-    for x in 0..24 {
-        if movesleft < 1 {
-            break;
+        for x in 0..24 {
+            if movesleft < 1 {
+                break;
+            }
+
+            let rx = x * px + left_edge;
+
+            let col1 = frame.get_pixel(rx, ry);
+            let col2 = frame.get_pixel(rx + 7, ry);
+            let col3 = frame.get_pixel(rx + 15, ry);
+
+            //let select_color = 2008344320;
+            //let select_color = 2008344575;
+            let select_color = 3887364095;
+            debug!(x, y, "pixels");
+            trace!(col1, col2, col3, select_color);
+
+            if col1 == select_color || col2 == select_color || col3 == select_color {
+                click((rx + 10) as i32, (ry - 10) as i32);
+                std::thread::sleep(std::time::Duration::from_millis(delay - 10));
+                movesleft -= 1;
+            };
+
+            //if(slotIsSelected(img, rx, ry) || slotIsSelected(img, rx + 15, ry)){
+            //img.setPixelColor(Jimp.cssColorToHex("#FF0000"), rx + 1, ry);
+            //await stash.click([rx + 10, ry - 10]);
+            //await robot.moveMouse(654, 801);
+            //await sleep(delays.grabTab);
+            //movesleft--;
+            //}
+            //img.setPixelColor(Jimp.cssColorToHex("#FFFFFF"), rx, ry);
         }
-
-        let rx = x * px + left_edge;
-
-        let col1 = frame.get_pixel(rx, ry);
-        let col2 = frame.get_pixel(rx + 7, ry);
-        let col3 = frame.get_pixel(rx + 15, ry);
-
-        //let select_color = 2008344320;
-        //let select_color = 2008344575;
-        let select_color = 3887364095;
-        debug!(x, y, "pixels");
-        trace!(col1, col2, col3, select_color);
-
-        if col1 == select_color || col2 == select_color || col3 == select_color {
-            click((rx + 10) as i32, (ry - 10) as i32);
-            std::thread::sleep(std::time::Duration::from_millis(delay - 10));
-            movesleft -= 1;
-        };
-
-        //if(slotIsSelected(img, rx, ry) || slotIsSelected(img, rx + 15, ry)){
-        //img.setPixelColor(Jimp.cssColorToHex("#FF0000"), rx + 1, ry);
-        //await stash.click([rx + 10, ry - 10]);
-        //await robot.moveMouse(654, 801);
-        //await sleep(delays.grabTab);
-        //movesleft--;
-        //}
-        //img.setPixelColor(Jimp.cssColorToHex("#FFFFFF"), rx, ry);
-    }
     }
 
     Ok(())

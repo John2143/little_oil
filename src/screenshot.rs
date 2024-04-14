@@ -68,9 +68,7 @@ pub fn take_screenshot_scrap(
 
     info!(
         width,
-        height,
-        monitor_index,
-        "Taking a screenshot on this monitor"
+        height, monitor_index, "Taking a screenshot on this monitor"
     );
 
     let sleep = 50;
