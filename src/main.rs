@@ -358,16 +358,10 @@ fn chance() -> anyhow::Result<()> {
 mod mouse {
     use tracing::trace;
     use once_cell::sync::Lazy;
+    use mouse_rs::types::keys::Keys;
 
     thread_local! {
         static FAKE_DEVICE: Lazy<mouse_rs::Mouse> = Lazy::new(|| mouse_rs::Mouse::new());
-    }
-
-    #[allow(non_camel_case_types)]
-    #[derive(Debug)]
-    pub enum Button {
-        BTN_LEFT,
-        BTN_RIGHT
     }
 
     pub fn init() {
@@ -376,27 +370,33 @@ mod mouse {
     pub fn click(x: i32, y: i32) {
         move_mouse(x, y);
         std::thread::sleep(std::time::Duration::from_millis(30));
-        click_release(Button::BTN_LEFT);
+        click_release(&Keys::RIGHT);
     }
 
     pub fn click_right(x: i32, y: i32) {
         move_mouse(x, y);
         std::thread::sleep(std::time::Duration::from_millis(30));
-        click_release(Button::BTN_RIGHT);
+        click_release(&Keys::LEFT);
     }
 
-    pub fn click_release(m: Button) {
-        trace!(?m, "click_release");
+    pub fn click_release(key: &Keys) {
+        FAKE_DEVICE.with(|mouse| {
+            mouse.press(key);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
-      //device.synchronize().unwrap();
+        FAKE_DEVICE.with(|mouse| {
+            mouse.release(key);
+        });
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
     pub fn move_mouse(x: i32, y: i32) {
         trace!(x, y, "mouse_move");
-        let d = *FAKE_DEVICE;
+        FAKE_DEVICE.with(|mouse| {
+            mouse.move_to(x, y)
+        });
 
-        //device.synchronize().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
