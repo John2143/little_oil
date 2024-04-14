@@ -3,6 +3,7 @@ use clap::Parser;
 use mouse::{click, click_right};
 //use inputbot::KeybdKey;
 use rand::Rng;
+use screenshot::ScreenshotData;
 use tracing::{debug, info, trace};
 
 use std::io::Cursor;
@@ -15,6 +16,7 @@ mod auto_roll;
 mod chaos_recipe;
 mod dicts;
 pub mod item;
+mod screenshot;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Settings {
@@ -48,8 +50,11 @@ impl Settings {
     fn screenshot(&self) -> anyhow::Result<ScreenshotData> {
         trace!(?self.screenshot_method, "Taking a screenshot");
         match self.screenshot_method {
-            ScreenshotMethod::Grim => take_screenshot_grim(&self),
-            ScreenshotMethod::Scrot => take_screenshot_scrap(&self),
+            #[cfg(feature = "input_wayland")]
+            ScreenshotMethod::Grim => screenshot::take_screenshot_grim(&self),
+            #[cfg(feature = "input_x")]
+            ScreenshotMethod::Scrot => screenshot::take_screenshot_scrap(&self),
+            ScreenshotMethod::None => bail!("No screenshot method defined. check your config!"),
         }
     }
 
@@ -88,10 +93,13 @@ struct InvPositions {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ScreenshotMethod {
+    #[cfg(feature = "input_wayland")]
     /// Wayland users should use an external program like "grim"
     Grim,
+    #[cfg(feature = "input_x")]
     /// Windows and Linux users can use scrot
     Scrot,
+    None,
 }
 
 use std::fs;
@@ -111,7 +119,7 @@ static DEFAULT_SETTINGS: Settings = Settings {
         width: 2560,
         height: 1440,
     },
-    screenshot_method: ScreenshotMethod::Scrot,
+    screenshot_method: ScreenshotMethod::None,
     pos: InvPositions {
         alt: (149, 368),
         aug: (303, 444),
@@ -340,7 +348,6 @@ fn chance() -> anyhow::Result<()> {
 mod mouse {
     use mouse_keyboard_input::{key_codes, Button, VirtualDevice};
     use once_cell::sync::Lazy;
-    //use inputbot::KeybdKey;
     use tracing::trace;
 
     use std::sync::Mutex;
@@ -467,113 +474,6 @@ fn empty_inv(settings: &Settings) -> anyhow::Result<()> {
     //empty_inv_macro(slot, delay);
 }
 
-pub struct ScreenshotData {
-    height: usize,
-    width: usize,
-    pixels: Vec<u8>,
-}
-
-#[tracing::instrument]
-pub fn take_screenshot_grim(settings: &Settings) -> anyhow::Result<ScreenshotData> {
-    let wloc = settings.poe_window_location;
-    let cmd = Command::new("grim")
-        // whole left screen
-        .arg("-g")
-        .arg(format!(
-            "{x},{y} {w}x{h}",
-            x = wloc.x,
-            y = wloc.y,
-            w = wloc.width,
-            h = wloc.height
-        ))
-        // png out
-        .arg("-t")
-        .arg("ppm")
-        .arg("-")
-        .output()
-        .unwrap();
-
-    // for .seek()
-    let stdout = Cursor::new(cmd.stdout);
-    // the output format ppm "portable pixel map" from grim is called
-    // pnm "portable any map" in the image crate.
-    let img = image::load(stdout, image::ImageFormat::Pnm)
-        .context("Failed to load screenshot from output of grim.")?;
-
-    //let path = Path::new("./last_screnshot.png");
-    //info!(path = ?path.canonicalize().unwrap(), "saving screenshot");
-    //img.save(path).unwrap();
-
-    Ok(ScreenshotData {
-        height: img.height() as usize,
-        width: img.width() as usize,
-        pixels: img.to_rgba8().to_vec(),
-    })
-}
-
-#[tracing::instrument]
-pub fn take_screenshot_scrap(settings: &Settings) -> anyhow::Result<ScreenshotData> {
-    debug!("taking screenshot...");
-    let disp = scrap::Display::primary().unwrap();
-    //let disps = scrap::Display::all().unwrap();
-    let mut cap = scrap::Capturer::new(disp).unwrap();
-    //for disp in disps.into_iter().skip(2) {
-    //cap = scrap::Capturer::new(disp).unwrap();
-    //println!("doing cap");
-    //break;
-    //}
-
-    let width = cap.width();
-    let height = cap.height();
-
-    let sleep = 50;
-
-    //max 2 seconds before fail
-    let maxloops = 2000 / sleep;
-
-    debug!("trying to screenshot...");
-
-    for _ in 0..maxloops {
-        match cap.frame() {
-            Ok(fr) => {
-                trace!("got screenshot");
-                return Ok(ScreenshotData {
-                    height,
-                    width,
-                    pixels: fr.to_vec(),
-                });
-            }
-            Err(e) => {
-                trace!(?e, "screenshot failed.");
-            }
-        }
-        std::thread::sleep(std::time::Duration::from_millis(sleep));
-    }
-
-    bail!("was not able to take screenshot after {maxloops} tries");
-}
-
-impl ScreenshotData {
-    //return RGBA8888 pixel as u32
-    fn get_pixel(&self, x: usize, y: usize) -> u32 {
-        assert!(x < self.width);
-        assert!(y < self.height);
-
-        let pos: usize = y * self.width + x;
-        let pos = pos * 4; //pixel format ARGB8888;
-
-        //TODO find the rust idiomatic way to do this
-        unsafe {
-            std::mem::transmute([
-                self.pixels[pos + 3],
-                self.pixels[pos + 2],
-                self.pixels[pos + 1],
-                self.pixels[pos],
-            ])
-        }
-    }
-}
-
 fn sort_quad(settings: &Settings, times: usize) -> anyhow::Result<()> {
     std::thread::sleep(std::time::Duration::from_millis(300));
 
@@ -589,33 +489,33 @@ fn sort_quad(settings: &Settings, times: usize) -> anyhow::Result<()> {
     //634, 660, 686, 712, 739, 765, //792,
     //];
     let left_edge = if height == 1080 {
-        21
+    21
     } else if height == 1440 {
-        29
+    29
     } else {
-        panic!("invalid screen size");
+    panic!("invalid screen size");
     };
 
     let px = if height == 1080 {
-        (2573 - 1920 - 15) / 24
+    (2573 - 1920 - 15) / 24
     } else if height == 1440 {
-        830 - 795
+    830 - 795
     } else {
-        panic!("invalid screen size");
+    panic!("invalid screen size");
     };
 
     let pys = if height == 1080 {
-        [
-            160, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581,
-            607, 634, 660, 686, 712, 739, 765, //792,
-        ]
+    [
+        160, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581,
+        607, 634, 660, 686, 712, 739, 765, //792,
+    ]
     } else if height == 1440 {
-        [
-            260, 295, 330, 365, 400, 436, 471, 506, 541, 576, 611, 646, 681, 716, 751, 787, 822,
-            857, 892, 927, 962, 997, 1032, 1067,
-        ]
+    [
+        260, 295, 330, 365, 400, 436, 471, 506, 541, 576, 611, 646, 681, 716, 751, 787, 822,
+        857, 892, 927, 962, 997, 1032, 1067,
+    ]
     } else {
-        panic!("invalid screen size");
+    panic!("invalid screen size");
     };
 
     //160, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581, 607,
@@ -624,40 +524,40 @@ fn sort_quad(settings: &Settings, times: usize) -> anyhow::Result<()> {
 
     let mut movesleft = times;
     for y in 0..24 {
-        let ry = pys[y];
+    let ry = pys[y];
 
-        for x in 0..24 {
-            if movesleft < 1 {
-                break;
-            }
-
-            let rx = x * px + left_edge;
-
-            let col1 = frame.get_pixel(rx, ry);
-            let col2 = frame.get_pixel(rx + 7, ry);
-            let col3 = frame.get_pixel(rx + 15, ry);
-
-            //let select_color = 2008344320;
-            //let select_color = 2008344575;
-            let select_color = 3887364095;
-            debug!(x, y, "pixels");
-            trace!(col1, col2, col3, select_color);
-
-            if col1 == select_color || col2 == select_color || col3 == select_color {
-                click((rx + 10) as i32, (ry - 10) as i32);
-                std::thread::sleep(std::time::Duration::from_millis(delay - 10));
-                movesleft -= 1;
-            };
-
-            //if(slotIsSelected(img, rx, ry) || slotIsSelected(img, rx + 15, ry)){
-            //img.setPixelColor(Jimp.cssColorToHex("#FF0000"), rx + 1, ry);
-            //await stash.click([rx + 10, ry - 10]);
-            //await robot.moveMouse(654, 801);
-            //await sleep(delays.grabTab);
-            //movesleft--;
-            //}
-            //img.setPixelColor(Jimp.cssColorToHex("#FFFFFF"), rx, ry);
+    for x in 0..24 {
+        if movesleft < 1 {
+            break;
         }
+
+        let rx = x * px + left_edge;
+
+        let col1 = frame.get_pixel(rx, ry);
+        let col2 = frame.get_pixel(rx + 7, ry);
+        let col3 = frame.get_pixel(rx + 15, ry);
+
+        //let select_color = 2008344320;
+        //let select_color = 2008344575;
+        let select_color = 3887364095;
+        debug!(x, y, "pixels");
+        trace!(col1, col2, col3, select_color);
+
+        if col1 == select_color || col2 == select_color || col3 == select_color {
+            click((rx + 10) as i32, (ry - 10) as i32);
+            std::thread::sleep(std::time::Duration::from_millis(delay - 10));
+            movesleft -= 1;
+        };
+
+        //if(slotIsSelected(img, rx, ry) || slotIsSelected(img, rx + 15, ry)){
+        //img.setPixelColor(Jimp.cssColorToHex("#FF0000"), rx + 1, ry);
+        //await stash.click([rx + 10, ry - 10]);
+        //await robot.moveMouse(654, 801);
+        //await sleep(delays.grabTab);
+        //movesleft--;
+        //}
+        //img.setPixelColor(Jimp.cssColorToHex("#FFFFFF"), rx, ry);
+    }
     }
 
     Ok(())
@@ -669,5 +569,4 @@ fn sort_quad(settings: &Settings, times: usize) -> anyhow::Result<()> {
     //frame.height.try_into().unwrap(),
     //image::ColorType::Rgba8,
     //)
-    //.unwrap();
 }
