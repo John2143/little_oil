@@ -35,12 +35,12 @@ pub(super) mod x {
 
     pub fn click_release(key: &Keys) {
         FAKE_DEVICE.with(|mouse| {
-            mouse.press(key);
+            mouse.press(key).unwrap();
         });
         std::thread::sleep(std::time::Duration::from_millis(10));
 
         FAKE_DEVICE.with(|mouse| {
-            mouse.release(key);
+            mouse.release(key).unwrap();
         });
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
@@ -48,7 +48,7 @@ pub(super) mod x {
     pub fn move_mouse(x: i32, y: i32) {
         trace!(x, y, "mouse_move");
         FAKE_DEVICE.with(|mouse| {
-            mouse.move_to(x, y)
+            mouse.move_to(x, y).unwrap();
         });
 
         std::thread::sleep(std::time::Duration::from_millis(10));

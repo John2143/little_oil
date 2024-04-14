@@ -68,7 +68,9 @@ pub fn take_screenshot_scrap(
 
     info!(
         width,
-        height, "Taking a screenshot on this monitor using Display::primary()"
+        height,
+        monitor_index,
+        "Taking a screenshot on this monitor"
     );
 
     let sleep = 50;
