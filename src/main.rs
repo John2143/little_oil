@@ -29,6 +29,7 @@ pub struct Settings {
     inv_delta_override: Option<u32>,
     monitor_scaling_factor: f32,
     screenshot_method: ScreenshotMethod,
+    input_method: InputMethod,
     pos: InvPositions,
 }
 
@@ -44,6 +45,15 @@ pub struct Rect {
     pub width: u32,
     /// The rectangle's height.
     pub height: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+enum InputMethod {
+    #[cfg(feature = "input_wayland")]
+    Uinput,
+    #[cfg(feature = "input_x")]
+    InputBot,
+    None
 }
 
 impl Settings {
@@ -120,6 +130,7 @@ static DEFAULT_SETTINGS: Settings = Settings {
         height: 1440,
     },
     screenshot_method: ScreenshotMethod::None,
+    input_method: InputMethod::None,
     pos: InvPositions {
         alt: (149, 368),
         aug: (303, 444),
@@ -274,16 +285,16 @@ impl CliCommand {
 }
 
 fn main() -> anyhow::Result<()> {
+    let cmd = CliArgs::try_parse()?;
     tracing_subscriber::fmt::init();
-    info!("Create input device.");
+    info!("Trying to create an input device.");
     // Wake the mouse device first, assume we will need to use it
-    mouse::FAKE_DEVICE.lock().unwrap().synchronize().unwrap();
+    mouse::init();
 
     let set = load_config(get_config_path(), Some(&DEFAULT_SETTINGS))?;
 
     *SETTINGS.write().unwrap() = set.clone();
 
-    let cmd = CliArgs::try_parse()?;
     cmd.cmd.run(&set)?;
 
     Ok(())
@@ -345,48 +356,101 @@ fn chance() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "input_x")]
 mod mouse {
-    use mouse_keyboard_input::{key_codes, Button, VirtualDevice};
-    use once_cell::sync::Lazy;
     use tracing::trace;
+    use once_cell::sync::Lazy;
 
-    use std::sync::Mutex;
+    thread_local! {
+        static FAKE_DEVICE: Lazy<mouse_rs::Mouse> = Lazy::new(|| mouse_rs::Mouse::new());
+    }
 
-    pub(super) static FAKE_DEVICE: Lazy<Mutex<VirtualDevice>> =
-        Lazy::new(|| Mutex::new(VirtualDevice::default().unwrap()));
+    #[allow(non_camel_case_types)]
+    #[derive(Debug)]
+    pub enum Button {
+        BTN_LEFT,
+        BTN_RIGHT
+    }
+
+    pub fn init() {
+        FAKE_DEVICE;
+    }
 
     pub fn click(x: i32, y: i32) {
         move_mouse(x, y);
         std::thread::sleep(std::time::Duration::from_millis(30));
-        click_release(key_codes::BTN_LEFT);
+        click_release(Button::BTN_LEFT);
     }
 
     pub fn click_right(x: i32, y: i32) {
         move_mouse(x, y);
         std::thread::sleep(std::time::Duration::from_millis(30));
-        click_release(key_codes::BTN_RIGHT);
+        click_release(Button::BTN_RIGHT);
     }
 
     pub fn click_release(m: Button) {
         trace!(?m, "click_release");
-        let mut device = FAKE_DEVICE.lock().unwrap();
 
-        device.click(m).unwrap();
-        //device.synchronize().unwrap();
+      //device.synchronize().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
     pub fn move_mouse(x: i32, y: i32) {
         trace!(x, y, "mouse_move");
-        let mut device = FAKE_DEVICE.lock().unwrap();
-        device.move_mouse(-5000, -5000).unwrap();
-        device
-            .move_mouse((x as f32 * 1.25) as _, (y as f32 * 1.25) as _)
-            .unwrap();
+        dbg!(FAKE_DEVICE);
+
         //device.synchronize().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
+
+//#[cfg(feature = "input_wayland")]
+//mod mouse {
+    //use mouse_keyboard_input::{key_codes, Button, VirtualDevice};
+    //use once_cell::sync::Lazy;
+    //use tracing::trace;
+
+    //use std::sync::Mutex;
+
+    //pub fn init() {
+        //FAKE_DEVICE.lock().unwrap().synchronize().unwrap();
+    //}
+
+    //static FAKE_DEVICE: Lazy<Mutex<VirtualDevice>> =
+        //Lazy::new(|| Mutex::new(VirtualDevice::default().unwrap()));
+
+    //pub fn click(x: i32, y: i32) {
+        //move_mouse(x, y);
+        //std::thread::sleep(std::time::Duration::from_millis(30));
+        //click_release(key_codes::BTN_LEFT);
+    //}
+
+    //pub fn click_right(x: i32, y: i32) {
+        //move_mouse(x, y);
+        //std::thread::sleep(std::time::Duration::from_millis(30));
+        //click_release(key_codes::BTN_RIGHT);
+    //}
+
+    //pub fn click_release(m: Button) {
+        //trace!(?m, "click_release");
+        //let mut device = FAKE_DEVICE.lock().unwrap();
+
+        //device.click(m).unwrap();
+        ////device.synchronize().unwrap();
+        //std::thread::sleep(std::time::Duration::from_millis(10));
+    //}
+
+    //pub fn move_mouse(x: i32, y: i32) {
+        //trace!(x, y, "mouse_move");
+        //let mut device = FAKE_DEVICE.lock().unwrap();
+        //device.move_mouse(-5000, -5000).unwrap();
+        //device
+            //.move_mouse((x as f32 * 1.25) as _, (y as f32 * 1.25) as _)
+            //.unwrap();
+        ////device.synchronize().unwrap();
+        //std::thread::sleep(std::time::Duration::from_millis(10));
+    //}
+//}
 
 use once_cell::sync::Lazy;
 use std::sync::RwLock;
@@ -465,7 +529,7 @@ fn empty_inv_macro(settings: &Settings, start_slot: u32, delay: u64) -> anyhow::
 }
 
 fn empty_inv(settings: &Settings) -> anyhow::Result<()> {
-    println!("empty inv (delay {})", settings.push_delay);
+    info!(settings.push_delay, "empty inv");
     //let slot = if KeybdKey::NumLockKey.is_toggled() { 5 } else { 0 };
     let slot = 0;
 
@@ -481,7 +545,7 @@ fn sort_quad(settings: &Settings, times: usize) -> anyhow::Result<()> {
 
     let frame = settings.screenshot()?;
 
-    info!("sort_quad (delay {})", delay);
+    info!(delay, "sort_quad");
 
     //let px: f64 = (625f64 - 17f64) / 23f64;
     //let pys = [

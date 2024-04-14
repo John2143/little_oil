@@ -13,7 +13,6 @@ pub struct ScreenshotData {
 }
 
 #[cfg(feature = "input_wayland")]
-#[tracing::instrument]
 pub fn take_screenshot_grim(settings: &Settings) -> anyhow::Result<ScreenshotData> {
     let wloc = settings.poe_window_location;
     let cmd = Command::new("grim")
@@ -52,7 +51,6 @@ pub fn take_screenshot_grim(settings: &Settings) -> anyhow::Result<ScreenshotDat
 }
 
 #[cfg(feature = "input_x")]
-#[tracing::instrument]
 pub fn take_screenshot_scrap(settings: &Settings) -> anyhow::Result<ScreenshotData> {
     debug!("taking screenshot...");
     let disp = scrap::Display::primary().unwrap();
