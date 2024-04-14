@@ -1,15 +1,8 @@
 //!This file contains all the different things that little oil can do, like empty your inventory,
 //!pull items out of your stash, or roll items.
-use anyhow::{bail, Context};
-use clap::Parser;
+use anyhow::{Context};
 use crate::mouse::{click, click_right};
-use rand::Rng;
-use crate::screenshot::ScreenshotData;
 use tracing::{debug, info, trace};
-use once_cell::sync::Lazy;
-use std::sync::RwLock;
-use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
 
 use crate::{Settings, SETTINGS};
 
