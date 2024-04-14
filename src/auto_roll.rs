@@ -1,6 +1,8 @@
+//![`auto_roll`] can use alts, augs and regals on an item to get specific stats. This is the v1
+//!item system.
 use serde::{Deserialize, Serialize};
 
-use crate::{click, click_right, load_config, read_item_on_cursor, Settings};
+use crate::{click, click_right, read_item_on_cursor, Settings};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AutoRollMod {
@@ -32,22 +34,12 @@ pub struct RollResult {
     has_mod: bool,
 }
 
-pub fn auto_roll(settings: &Settings, path: &str, times: i64) -> Option<RollResult> {
+pub fn auto_roll(settings: &Settings, config: &AutoRollConfig, times: usize) -> Option<RollResult> {
     #![allow(unused_variables)]
     let alt = (155, 354);
     let aug = (300, 422);
     let reg = (572, 354);
     let slot = (444, 628);
-
-    let config: AutoRollConfig = {
-        match load_config(&path, None) {
-            Ok(config) => config,
-            Err(msg) => {
-                println!("{}", msg);
-                return None;
-            }
-        }
-    };
 
     assert!(times > 0);
 
@@ -68,7 +60,7 @@ pub fn auto_roll(settings: &Settings, path: &str, times: i64) -> Option<RollResu
 
         println!("alt");
         let item = read_item_on_cursor();
-        res = check_roll(&item, &config);
+        res = check_roll(&item, config);
         if true || res.has_mod {
             println!("got mod");
             break;
@@ -83,7 +75,7 @@ pub fn auto_roll(settings: &Settings, path: &str, times: i64) -> Option<RollResu
             click(slot.0, slot.1);
             std::thread::sleep(std::time::Duration::from_millis(sleep_read));
 
-            res = check_roll(&read_item_on_cursor(), &config);
+            res = check_roll(&read_item_on_cursor(), config);
             if res.has_mod {
                 break;
             }
@@ -112,7 +104,7 @@ pub fn auto_roll(settings: &Settings, path: &str, times: i64) -> Option<RollResu
         click(slot.0, slot.1);
         std::thread::sleep(std::time::Duration::from_millis(sleep_read));
 
-        res = check_roll(&read_item_on_cursor(), &config);
+        res = check_roll(&read_item_on_cursor(), config);
     }
 
     Some(res)
@@ -121,8 +113,7 @@ pub fn auto_roll(settings: &Settings, path: &str, times: i64) -> Option<RollResu
 fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
     let maybe_name = item_text
         .lines()
-        .filter(|s| s.contains(&config.item_name))
-        .nth(0)
+        .find(|s| s.contains(&config.item_name))
         .unwrap();
 
     dbg!(&item_text.lines().collect::<Vec<_>>()[8..]);
@@ -134,11 +125,6 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
             .mods
             .iter()
             .map(|x| x.name.as_str())
-            .any(|x| item_text.to_lowercase().contains(&x)),
+            .any(|x| item_text.to_lowercase().contains(x)),
     }
-}
-
-#[test]
-fn test_auto_roll() {
-    auto_roll("test.json", 1);
 }
