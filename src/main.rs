@@ -5,7 +5,7 @@ use mouse::{click, click_right};
 use rand::Rng;
 use tracing::{debug, info, trace};
 
-use std::io::{Cursor};
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -179,9 +179,7 @@ enum CliCommand {
     PrintConfig,
 
     /// Pull items out of a quad tab and into your inventory.
-    Sort {
-        times: usize,
-    },
+    Sort { times: usize },
 
     /// Emtpy your inventory into your stash. You must use reset_inv at least once before running
     /// this.
@@ -193,10 +191,7 @@ enum CliCommand {
     ResetInv,
 
     /// [old] Roll an item in your currency tab to get specific stats.
-    Roll {
-        times: usize,
-        config: PathBuf,
-    },
+    Roll { times: usize, config: PathBuf },
     /// [old] chance an item into a unique
     Chance,
 
@@ -221,15 +216,19 @@ impl CliCommand {
             CliCommand::Empty => {
                 return empty_inv(&settings);
             }
-            CliCommand::Roll { times, config: target_item_config } => {
-                let ar_config: auto_roll::AutoRollConfig = load_config(target_item_config, None).context("Loading auto_roll_config")?;
+            CliCommand::Roll {
+                times,
+                config: target_item_config,
+            } => {
+                let ar_config: auto_roll::AutoRollConfig =
+                    load_config(target_item_config, None).context("Loading auto_roll_config")?;
 
                 let roll_res = auto_roll::auto_roll(&settings, &ar_config, *times);
                 info!(?roll_res);
                 return Ok(());
             }
             CliCommand::ResetInv => {
-                return reset_inv_colors();
+                return reset_inv_colors(&settings);
             }
             CliCommand::Chance => {
                 return chance();
@@ -239,8 +238,6 @@ impl CliCommand {
                     Some(s) => s,
                     None => bail!("No chaos recipe config found"),
                 };
-
-                drop(settings);
 
                 chaos_recipe::get_tally(&c);
                 return Ok(());
@@ -260,8 +257,6 @@ impl CliCommand {
                         bail!("No chaos recipe config found");
                     }
                 };
-
-                drop(settings);
 
                 chaos_recipe::do_recipe(&c, amt);
                 return Ok(());
@@ -389,13 +384,10 @@ mod mouse {
 use once_cell::sync::Lazy;
 use std::sync::RwLock;
 
-fn reset_inv_colors() -> anyhow::Result<()> {
-    let settings = SETTINGS.read().unwrap();
+fn reset_inv_colors(settings: &Settings) -> anyhow::Result<()> {
     let inv_loc = settings.pos.inv;
     let inv_delta = settings.inv_delta();
     let frame = settings.screenshot()?;
-
-    drop(settings);
 
     let mut colors = vec![0; 60];
 
