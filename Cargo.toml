@@ -36,6 +36,11 @@ image = "0.25.1"
 # For items
 rust_decimal = "1.35.0"
 
+# CLI arg parsing
+clap = { version = "4.5.4", features = ["derive"] }
+# get home directory
+dirs = "5.0.1"
+
 # X input
 scrap = { version = "0.5.0", optional = true }
 mouse-rs = { version = "0.4.2", optional = true }
@@ -43,8 +48,3 @@ mouse-rs = { version = "0.4.2", optional = true }
 # wayland input
 uinput = { version = "0.1.3", optional = true }
 mouse-keyboard-input = { version = "0.4.1", optional = true }
-
-# CLI arg parsing
-clap = { version = "4.5.4", features = ["derive"] }
-# get home directory
-dirs = "5.0.1"
