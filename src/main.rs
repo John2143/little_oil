@@ -1,10 +1,10 @@
-use anyhow::bail;
+use anyhow::{bail, Context};
+use clap::Parser;
+use mouse::{click, click_right};
 use mouse_keyboard_input::{key_codes, Button, VirtualDevice};
 //use inputbot::KeybdKey;
 use rand::Rng;
 use tracing::{debug, info, trace};
-use wayland_client::protocol::wl_registry;
-use wayland_client::Connection;
 
 use std::io::{self, BufRead, Cursor};
 use std::path::{Path, PathBuf};
@@ -24,17 +24,55 @@ pub struct Settings {
     push_delay: u64,
     div_delay: u64,
     inv_colors: Option<Vec<u32>>,
-    screen_height: Option<u32>,
+    poe_window_location: Rect,
+    inv_delta_override: Option<u32>,
+    monitor_scaling_factor: f32,
     screenshot_method: ScreenshotMethod,
     pos: InvPositions,
 }
 
+/// A Rectangle defined by its top left corner, width and height.
+/// From the image crate
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Rect {
+    /// The x coordinate of the top left corner.
+    pub x: u32,
+    /// The y coordinate of the top left corner.
+    pub y: u32,
+    /// The rectangle's width.
+    pub width: u32,
+    /// The rectangle's height.
+    pub height: u32,
+}
+
 impl Settings {
     fn screenshot(&self) -> anyhow::Result<ScreenshotData> {
+        trace!(?self.screenshot_method, "Taking a screenshot");
         match self.screenshot_method {
-            ScreenshotMethod::Grim => take_screenshot_grim(),
-            ScreenshotMethod::Scrot => take_screenshot_scrap(),
+            ScreenshotMethod::Grim => take_screenshot_grim(&self),
+            ScreenshotMethod::Scrot => take_screenshot_scrap(&self),
         }
+    }
+
+    fn inv_delta(&self) -> u32 {
+        // If it's configured, use that
+        if let Some(d) = self.inv_delta_override {
+            return d;
+        }
+
+        // Infer from screen height
+        let height = self.poe_window_location.height;
+        if height == 1080 {
+            return 53;
+        } else if height == 1440 {
+            return 70;
+        } else if height == 1000 {
+            return 54;
+        } else {
+            return (height as f32 / 20.50) as _;
+        }
+
+        //panic!("Please set either inv_delta_override or screen_height");
     }
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -66,7 +104,14 @@ static DEFAULT_SETTINGS: Settings = Settings {
     push_delay: 40,
     div_delay: 100,
     inv_colors: None,
-    screen_height: Some(1440),
+    inv_delta_override: None,
+    monitor_scaling_factor: 1.0,
+    poe_window_location: Rect {
+        x: 0,
+        y: 0,
+        width: 2560,
+        height: 1440,
+    },
     screenshot_method: ScreenshotMethod::Scrot,
     pos: InvPositions {
         alt: (149, 368),
@@ -76,7 +121,7 @@ static DEFAULT_SETTINGS: Settings = Settings {
         annul: (226, 372),
         transmute: (71, 368),
         inv: (1713, 828),
-    }
+    },
 };
 
 static SETTINGS: Lazy<RwLock<Settings>> = Lazy::new(|| RwLock::new(DEFAULT_SETTINGS.clone()));
@@ -89,7 +134,6 @@ pub fn get_config_path() -> PathBuf {
 
 pub fn save_config<T: Serialize, P: AsRef<Path>>(path: P, set: &T) -> Result<(), std::io::Error> {
     let mut file = fs::File::create(&path)?;
-    //dirs::
     file.write_all(serde_json::to_string_pretty(&set).unwrap().as_bytes())?;
 
     Ok(())
@@ -124,162 +168,123 @@ where
     }
 }
 
-struct AppData;
-impl wayland_client::Dispatch<wl_registry::WlRegistry, ()> for AppData {
-    fn event(
-        _state: &mut Self,
-        _: &wl_registry::WlRegistry,
-        event: wl_registry::Event,
-        _: &(),
-        _: &Connection,
-        _: &wayland_client::QueueHandle<AppData>,
-    ) {
-        // When receiving events from the wl_registry, we are only interested in the
-        // `global` event, which signals a new available global.
-        // When receiving this event, we just print its characteristics in this example.
-        if let wl_registry::Event::Global {
-            name,
-            interface,
-            version,
-        } = event
-        {
-            println!("[{}] {} (v{})", name, interface, version);
+#[derive(clap::Parser, Debug)]
+struct CliArgs {
+    #[command(subcommand)]
+    cmd: CliCommand,
+}
+
+#[derive(clap::Subcommand, Clone, Debug)]
+enum CliCommand {
+    /// Print the default configuration file and exit.
+    PrintConfig,
+
+    /// Pull items out of a quad tab and into your inventory.
+    Sort {
+        times: usize,
+    },
+
+    /// Emtpy your inventory into your stash. You must use reset_inv at least once before running
+    /// this.
+    Empty,
+    /// To use this command, open your inventory first. It will take a screenshot and remember your
+    /// layout of portal scrolls, maps, essences, or other inventory items you want to keep.
+    ///
+    /// Then, running the [`Empty`] command will clear out any inventory slots with items in it.
+    ResetInv,
+
+    /// [old] Roll an item in your currency tab to get specific stats.
+    Roll {
+        times: usize,
+        config: PathBuf,
+    },
+    /// [old] chance an item into a unique
+    Chance,
+
+    /// [old] Count how many chaos items are in a tab.
+    Tally,
+
+    /// [old] Do the chaos recipe?
+    Chaos,
+}
+
+impl CliCommand {
+    fn run(&self, settings: &Settings) -> anyhow::Result<()> {
+        match self {
+            CliCommand::PrintConfig => {
+                let s = serde_json::to_string(&DEFAULT_SETTINGS).unwrap();
+                println!("{}", s);
+                return Ok(());
+            }
+            CliCommand::Sort { times } => {
+                return sort_quad(&settings, *times);
+            }
+            CliCommand::Empty => {
+                return empty_inv(&settings);
+            }
+            CliCommand::Roll { times, config: target_item_config } => {
+                let ar_config: auto_roll::AutoRollConfig = load_config(target_item_config, None).context("Loading auto_roll_config")?;
+
+                let roll_res = auto_roll::auto_roll(&settings, &ar_config, *times);
+                info!(?roll_res);
+                return Ok(());
+            }
+            CliCommand::ResetInv => {
+                return reset_inv_colors();
+            }
+            CliCommand::Chance => {
+                return chance();
+            }
+            CliCommand::Tally => {
+                let c = match settings.chaos_recipe_settings.clone() {
+                    Some(s) => s,
+                    None => bail!("No chaos recipe config found"),
+                };
+
+                drop(settings);
+
+                chaos_recipe::get_tally(&c);
+                return Ok(());
+            }
+            CliCommand::Chaos => {
+                //let amt: usize = args
+                //.get(1)
+                //.unwrap_or(&"1".to_string())
+                //.parse()
+                //.expect("Invalid number of recipes, try 1 or 2");
+                let amt = 1;
+
+                let settings = SETTINGS.read().unwrap();
+                let c = match settings.chaos_recipe_settings.clone() {
+                    Some(s) => s,
+                    None => {
+                        bail!("No chaos recipe config found");
+                    }
+                };
+
+                drop(settings);
+
+                chaos_recipe::do_recipe(&c, amt);
+                return Ok(());
+            }
         }
     }
 }
 
 fn main() -> anyhow::Result<()> {
-    FAKE_DEVICE.lock().unwrap().synchronize();
     tracing_subscriber::fmt::init();
-    tracing::info!("Starting main loop");
+    info!("Create input device.");
+    // Wake the mouse device first, assume we will need to use it
+    mouse::FAKE_DEVICE.lock().unwrap().synchronize().unwrap();
 
-    // init wayland
-    //let conn = Connection::connect_to_env().expect("Wayland not initialized");
-    //let display = conn.display();
-    //let mut event_queue = conn.new_event_queue();
-    //let qh = event_queue.handle();
-
-    //let _registry = display.get_registry(&qh, ());
-
-    //let mut dat = AppData;
-    //event_queue.roundtrip(&mut dat);
-    //event_queue.blocking_dispatch(&mut dat);
-
-    let mut _rand = rand::thread_rng();
     let set = load_config(get_config_path(), Some(&DEFAULT_SETTINGS))?;
 
-    *SETTINGS.write().unwrap() = set;
+    *SETTINGS.write().unwrap() = set.clone();
 
-    //println!("got config: {:?}", SETTINGS.read().unwrap());
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let cmd = CliArgs::try_parse()?;
+    cmd.cmd.run(&set)?;
 
-    match args.get(0).map(|x| &**x) {
-        Some("config") => {
-            let s = serde_json::to_string(&DEFAULT_SETTINGS).unwrap();
-            println!("{}", s);
-            return Ok(())
-        }
-        Some("sort") => {
-            dbg!(&args);
-            let times = args
-                .get(1)
-                .map(|x| x.parse())
-                .unwrap_or(Ok(40))
-                .expect("invalid number");
-
-            return sort_quad(times);
-        }
-        Some("empty") => {
-            return empty_inv(&SETTINGS.read().unwrap());
-        }
-        Some("roll") => {
-            let file = args.get(1).expect("missing name to roll");
-            let times = args
-                .get(2)
-                .expect("missing number of times to roll")
-                .parse()
-                .expect("invalid number");
-
-            auto_roll::auto_roll(&SETTINGS.read().unwrap(), &file, times);
-            return Ok(());
-        }
-        Some("reset_inv") => {
-            return reset_inv_colors();
-        }
-        Some("chance") => {
-            return chance();
-        }
-        Some("tally") => {
-            let settings = SETTINGS.read().unwrap();
-            let c = match settings.chaos_recipe_settings.clone() {
-                Some(s) => s,
-                None => bail!("No chaos recipe config found"),
-            };
-
-            drop(settings);
-
-            chaos_recipe::get_tally(&c);
-            return Ok(());
-        }
-        Some("chaos") => {
-            let amt: usize = args
-                .get(1)
-                .unwrap_or(&"1".to_string())
-                .parse()
-                .expect("Invalid number of recipes, try 1 or 2");
-
-            let settings = SETTINGS.read().unwrap();
-            let c = match settings.chaos_recipe_settings.clone() {
-                Some(s) => s,
-                None => {
-                    bail!("No chaos recipe config found");
-                }
-            };
-
-            drop(settings);
-
-            chaos_recipe::do_recipe(&c, amt);
-            return Ok(());
-        }
-        Some(n) => {
-            println!("Invalid command: {}", n);
-            return Ok(());
-        }
-
-        None => {}
-    }
-
-    println!("starting in inputbot mode");
-
-    //KeybdKey::HomeKey.bind(move || {
-    //sort_quad(40);
-    //});
-    //KeybdKey::AKey.bind(move || {
-    //empty_inv();
-    //});
-
-    //KeybdKey::F7Key.bind(move || {
-    //chance();
-    //});
-
-    //let inputs = std::thread::spawn(|| inputbot::handle_input_events());
-
-    let cmdline = std::thread::spawn(move || {
-        command_line();
-    });
-
-    //inputs.join().unwrap();
-    cmdline.join().unwrap();
     Ok(())
-}
-
-fn split_space(input: &str) -> (&str, &str) {
-    for (i, c) in input.chars().enumerate() {
-        if c == ' ' {
-            return (&input[0..i], &input[i + 1..]);
-        }
-    }
-    return (input, "");
 }
 
 use clipboard::ClipboardContext;
@@ -338,168 +343,62 @@ fn chance() -> anyhow::Result<()> {
     Ok(())
 }
 
-static HELP: &str = r#"
-help: Show this menu
-pull <delay>: Change delay for pulling out of quad tab
-push <delay>: Change delay for pushing into tab/trade
-div <delay>: Change delay for div macro
-chrome <file> <times>: Open a autoroll file, with name <file>, and roll item <times>
-mchrome <file>: Create example chrome file with name <file>. To be used with chrome later.
+mod mouse {
+    use mouse_keyboard_input::{key_codes, Button, VirtualDevice};
+    use once_cell::sync::Lazy;
+    //use inputbot::KeybdKey;
+    use tracing::trace;
 
-Press Home to pull from tab
-Press Insert to push into inv
-Press F7 to use chance macro
+    use std::sync::Mutex;
 
-Press CTRL + C to quit this program.
-"#;
+    pub(super) static FAKE_DEVICE: Lazy<Mutex<VirtualDevice>> =
+        Lazy::new(|| Mutex::new(VirtualDevice::default().unwrap()));
 
-fn command_line() {
-    let stdin = io::stdin();
-    for line in stdin.lock().lines() {
-        match split_space(&line.unwrap()) {
-            //TODO find rusty way to do this DRY
-            ("pull", rest @ _) => {
-                println!("pull delay is {}", rest);
-                match rest.parse() {
-                    Ok(x) => {
-                        let mut s = SETTINGS.write().unwrap();
-                        s.pull_delay = x;
-                        save_config(get_config_path(), &*s).unwrap();
-                    }
-                    Err(_) => println!("could not delay"),
-                }
-            }
-            ("push", rest @ _) => {
-                println!("push delay is {}", rest);
-                match rest.parse() {
-                    Ok(x) => {
-                        let mut s = SETTINGS.write().unwrap();
-                        s.push_delay = x;
-                        //save_config(CONFIG_PATH, &s).unwrap();
-                    }
-                    Err(_) => println!("could not delay"),
-                }
-            }
-            ("div", rest @ _) => {
-                println!("div delay is {}", rest);
-                match rest.parse() {
-                    Ok(x) => {
-                        let mut s = SETTINGS.write().unwrap();
-                        s.div_delay = x;
-                        //save_config(CONFIG_PATH, &s).unwrap();
-                    }
-                    Err(_) => println!("could not delay"),
-                }
-            }
-            ("chrome", rest @ _) => {
-                let (file, times) = split_space(rest);
-                println!("Loading chrome file {}", file);
+    pub fn click(x: i32, y: i32) {
+        move_mouse(x, y);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        click_release(key_codes::BTN_LEFT);
+    }
 
-                match auto_roll::auto_roll(&SETTINGS.read().unwrap(), &file, times.parse().unwrap()) {
-                    None => println!("failed to roll"),
-                    Some(res) => {
-                        println!("{:?}", res);
-                    }
-                }
-            }
-            ("mchrome", file @ _) => {
-                println!("Making chrome file {}", file);
+    pub fn click_right(x: i32, y: i32) {
+        move_mouse(x, y);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        click_release(key_codes::BTN_RIGHT);
+    }
 
-                save_config(
-                    &file,
-                    &AutoRollConfig {
-                        auto_aug_regal: false,
-                        item_name: "Medium Cluster Jewel".to_string(),
-                        mods: vec![
-                            AutoRollMod {
-                                name: "heraldry".into(),
-                                is_prefix: true,
-                            },
-                            AutoRollMod {
-                                name: "harbinger".into(),
-                                is_prefix: true,
-                            },
-                            AutoRollMod {
-                                name: "endbringer".into(),
-                                is_prefix: true,
-                            },
-                        ],
-                    },
-                )
-                .unwrap();
-            }
-            ("help", _) => {
-                println!("Available Commands: {}", HELP);
-            }
-            (_, _) => println!("Unknown command"),
-        }
+    pub fn click_release(m: Button) {
+        trace!(?m, "click_release");
+        let mut device = FAKE_DEVICE.lock().unwrap();
+
+        device.click(m).unwrap();
+        //device.synchronize().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    pub fn move_mouse(x: i32, y: i32) {
+        trace!(x, y, "mouse_move");
+        let mut device = FAKE_DEVICE.lock().unwrap();
+        device.move_mouse(-5000, -5000).unwrap();
+        device
+            .move_mouse((x as f32 * 1.25) as _, (y as f32 * 1.25) as _)
+            .unwrap();
+        //device.synchronize().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
 
-//thread_local!(static MOUSE: Lazy<mouse_rs::Mouse> = Lazy::new(|| mouse_rs::Mouse::new()));
-
-static FAKE_DEVICE: Lazy<Mutex<VirtualDevice>> =
-    Lazy::new(|| Mutex::new(VirtualDevice::default().unwrap()));
-
-fn click(x: i32, y: i32) {
-    move_mouse(x, y);
-    std::thread::sleep(std::time::Duration::from_millis(30));
-    click_release(key_codes::BTN_LEFT);
-}
-
-fn click_right(x: i32, y: i32) {
-    move_mouse(x, y);
-    std::thread::sleep(std::time::Duration::from_millis(30));
-    click_release(key_codes::BTN_RIGHT);
-}
-
-fn click_release(m: Button) {
-    trace!(?m, "click_release");
-    let mut device = FAKE_DEVICE.lock().unwrap();
-
-    device.click(m).unwrap();
-    //device.synchronize().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(10));
-}
-
-fn move_mouse(x: i32, y: i32) {
-    trace!(x, y, "mouse_move");
-    let mut device = FAKE_DEVICE.lock().unwrap();
-    device.move_mouse(-5000, -5000).unwrap();
-    device.move_mouse((x as f32 * 1.25) as _, (y as f32 * 1.25) as _).unwrap();
-    //device.synchronize().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(10));
-}
-
 use once_cell::sync::Lazy;
-use std::sync::{Mutex, RwLock};
-
-use crate::auto_roll::AutoRollConfig;
-use crate::auto_roll::AutoRollMod;
+use std::sync::RwLock;
 
 fn reset_inv_colors() -> anyhow::Result<()> {
     let settings = SETTINGS.read().unwrap();
-    let height = settings.screen_height.unwrap_or(1080);
-
     let inv_loc = settings.pos.inv;
-
-    let inv_delta = if height == 1080 {
-        53
-    } else if height == 1440 {
-        70
-    } else if height == 1000 {
-        54
-    } else {
-        panic!("invalid screen size");
-    };
-
-    //click(618, 618);
-
+    let inv_delta = settings.inv_delta();
     let frame = settings.screenshot()?;
+
     drop(settings);
 
-    let mut colors = Vec::with_capacity(60);
-    colors.resize(60, 0);
+    let mut colors = vec![0; 60];
 
     for x in 0..12 {
         for y in 0..5 {
@@ -521,32 +420,24 @@ fn reset_inv_colors() -> anyhow::Result<()> {
 }
 
 fn empty_inv_macro(settings: &Settings, start_slot: u32, delay: u64) -> anyhow::Result<()> {
-    let height = settings.screen_height.unwrap_or(1080);
+    let height = settings.poe_window_location.height;
 
     let inv_loc = settings.pos.inv;
-    let inv_delta = if height == 1080 {
-        53
-    } else if height == 1440 {
-        70
-    } else if height == 1000 {
-        54
-    } else {
-        panic!("invalid screen size");
-    };
-
-    info!(height, x = inv_loc.0, y = inv_loc.1, inv_delta, "Emptying inv");
-
+    let inv_delta = settings.inv_delta();
     let frame = settings.screenshot()?;
 
-    //TODO make it not allocate
-    let default_colors = {
-        let mut x = vec![0; 60];
-        x.resize(60, 0);
-        x
-    };
+    let inv_color = settings
+        .inv_colors
+        .as_ref()
+        .context("inv_colors not set: consider running `reset_inv_colors`.")?;
 
-    let inv_color = settings.inv_colors.as_ref().unwrap_or(&default_colors);
-
+    info!(
+        height,
+        x = inv_loc.0,
+        y = inv_loc.1,
+        inv_delta,
+        "Emptying inv"
+    );
     for x in (start_slot / 5)..12 {
         for y in (start_slot % 5)..5 {
             let mousex = x * inv_delta + inv_loc.0;
@@ -564,7 +455,7 @@ fn empty_inv_macro(settings: &Settings, start_slot: u32, delay: u64) -> anyhow::
 
                 debug!(x, y, "clicking inv");
 
-                click(rx, ry);
+                mouse::click(rx, ry);
                 std::thread::sleep(std::time::Duration::from_millis(delay));
             }
         }
@@ -591,11 +482,19 @@ pub struct ScreenshotData {
     pixels: Vec<u8>,
 }
 
-pub fn take_screenshot_grim() -> anyhow::Result<ScreenshotData> {
+#[tracing::instrument]
+pub fn take_screenshot_grim(settings: &Settings) -> anyhow::Result<ScreenshotData> {
+    let wloc = settings.poe_window_location;
     let cmd = Command::new("grim")
         // whole left screen
         .arg("-g")
-        .arg("0,0 2560x1440")
+        .arg(format!(
+            "{x},{y} {w}x{h}",
+            x = wloc.x,
+            y = wloc.y,
+            w = wloc.width,
+            h = wloc.height
+        ))
         // png out
         .arg("-t")
         .arg("ppm")
@@ -607,7 +506,8 @@ pub fn take_screenshot_grim() -> anyhow::Result<ScreenshotData> {
     let stdout = Cursor::new(cmd.stdout);
     // the output format ppm "portable pixel map" from grim is called
     // pnm "portable any map" in the image crate.
-    let img = image::load(stdout, image::ImageFormat::Pnm).unwrap();
+    let img = image::load(stdout, image::ImageFormat::Pnm)
+        .context("Failed to load screenshot from output of grim.")?;
 
     //let path = Path::new("./last_screnshot.png");
     //info!(path = ?path.canonicalize().unwrap(), "saving screenshot");
@@ -620,8 +520,9 @@ pub fn take_screenshot_grim() -> anyhow::Result<ScreenshotData> {
     })
 }
 
-pub fn take_screenshot_scrap() -> anyhow::Result<ScreenshotData> {
-    println!("taking screenshot...");
+#[tracing::instrument]
+pub fn take_screenshot_scrap(settings: &Settings) -> anyhow::Result<ScreenshotData> {
+    debug!("taking screenshot...");
     let disp = scrap::Display::primary().unwrap();
     //let disps = scrap::Display::all().unwrap();
     let mut cap = scrap::Capturer::new(disp).unwrap();
@@ -639,12 +540,12 @@ pub fn take_screenshot_scrap() -> anyhow::Result<ScreenshotData> {
     //max 2 seconds before fail
     let maxloops = 2000 / sleep;
 
-    println!("trying to screenshot...");
+    debug!("trying to screenshot...");
 
     for _ in 0..maxloops {
         match cap.frame() {
             Ok(fr) => {
-                println!("got screenshot");
+                trace!("got screenshot");
                 return Ok(ScreenshotData {
                     height,
                     width,
@@ -652,7 +553,7 @@ pub fn take_screenshot_scrap() -> anyhow::Result<ScreenshotData> {
                 });
             }
             Err(e) => {
-                println!("screenshot failed... {}", e);
+                trace!(?e, "screenshot failed.");
             }
         }
         std::thread::sleep(std::time::Duration::from_millis(sleep));
@@ -682,17 +583,14 @@ impl ScreenshotData {
     }
 }
 
-fn sort_quad(times: u32) -> anyhow::Result<()> {
+fn sort_quad(settings: &Settings, times: usize) -> anyhow::Result<()> {
     std::thread::sleep(std::time::Duration::from_millis(300));
 
-    let settings = SETTINGS.read().unwrap();
-    let (delay, height) = { (settings.pull_delay, settings.screen_height.unwrap_or(1080)) };
+    let (delay, height) = { (settings.pull_delay, settings.poe_window_location.height) };
 
     let frame = settings.screenshot()?;
 
-    drop(settings);
-
-    println!("take tab (delay {})", delay);
+    info!("sort_quad (delay {})", delay);
 
     //let px: f64 = (625f64 - 17f64) / 23f64;
     //let pys = [
