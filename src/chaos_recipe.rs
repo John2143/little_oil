@@ -10,10 +10,10 @@ pub struct ChaosRecipe {
 }
 
 #[derive(Deserialize, Debug, Clone)]
-struct Color {
-    r: usize,
-    g: usize,
-    b: usize,
+pub struct Color {
+    pub r: usize,
+    pub g: usize,
+    pub b: usize,
 }
 
 #[allow(dead_code)]
@@ -206,7 +206,7 @@ impl ChaosRecipe {
                     .chaos_recipe_settings
                     .as_mut()
                     .map(|s| s.tab_index = Some(tab.i));
-                crate::save_config(crate::CONFIG_PATH, &*settings).unwrap();
+                crate::save_config(crate::get_config_path(), &*settings).unwrap();
                 println!("writing config {:?}", settings);
 
                 let mut newc = self.clone();
@@ -340,7 +340,7 @@ impl ItemList<'_> {
     fn take(&self) {
         let (delay, height) = {
             let settings = crate::SETTINGS.read().unwrap();
-            (settings.pull_delay, settings.screen_height.unwrap_or(1080))
+            (settings.pull_delay, settings.poe_window_location.height)
         };
 
         let left_edge = if height == 1080 {
@@ -412,8 +412,6 @@ impl ItemList<'_> {
     }
 }
 
-use ureq;
-
 pub fn get_tally(cr_config: &ChaosRecipe) {
     let apir = cr_config.get_json();
     println!("Total item counts: {:?}", apir.tally());
@@ -421,7 +419,7 @@ pub fn get_tally(cr_config: &ChaosRecipe) {
 
 pub fn do_recipe(cr_config: &ChaosRecipe, amt: usize) {
     let mut apir = cr_config.get_json();
-    for i in 0..amt {
+    for _ in 0..amt {
         let item_list = apir.create_item_list();
         item_list.take();
     }

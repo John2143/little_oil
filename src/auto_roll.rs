@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{click, click_right, load_config, read_item_on_cursor, Settings};
+use crate::{click, click_right, read_item_on_cursor, Settings};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AutoRollMod {
@@ -32,22 +32,12 @@ pub struct RollResult {
     has_mod: bool,
 }
 
-pub fn auto_roll(settings: &Settings, path: &str, times: i64) -> Option<RollResult> {
+pub fn auto_roll(settings: &Settings, config: &AutoRollConfig, times: usize) -> Option<RollResult> {
     #![allow(unused_variables)]
     let alt = (155, 354);
     let aug = (300, 422);
     let reg = (572, 354);
     let slot = (444, 628);
-
-    let config: AutoRollConfig = {
-        match load_config(&path, None) {
-            Ok(config) => config,
-            Err(msg) => {
-                println!("{}", msg);
-                return None;
-            }
-        }
-    };
 
     assert!(times > 0);
 
@@ -136,9 +126,4 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
             .map(|x| x.name.as_str())
             .any(|x| item_text.to_lowercase().contains(&x)),
     }
-}
-
-#[test]
-fn test_auto_roll() {
-    auto_roll("test.json", 1);
 }

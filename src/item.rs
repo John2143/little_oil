@@ -65,18 +65,18 @@ impl<'a> Display for ItemName {
 #[derive(Debug)]
 pub struct ItemMod<'a> {
     /// prefix, suffix, unique
-    affix_type: AffixType,
+    pub affix_type: AffixType,
 
     /// Contains the tier if it's a rare mod
-    affix_name_tier: Option<AffixNameTier<'a>>,
+    pub affix_name_tier: Option<AffixNameTier<'a>>,
 
-    value: Option<Decimal>,
-    roll_range: Option<Range<Decimal>>,
+    pub value: Option<Decimal>,
+    pub roll_range: Option<Range<Decimal>>,
 
     /// Tags for catalysts: things like Defenses, Evasion, Fire
-    tags: Vec<&'a str>,
+    pub tags: Vec<&'a str>,
     /// is fractured, etc
-    mod_qualifiers: &'a str,
+    pub mod_qualifiers: &'a str,
 }
 
 #[non_exhaustive]
