@@ -512,7 +512,7 @@ fn click_right(x: i32, y: i32) {
 }
 
 fn move_mouse(x: i32, y: i32) {
-    inputbot::MouseCursor::move_abs(x, y);
+    inputbot::MouseCursor::move_abs(1920 + x, y);
 }
 
 use once_cell::sync::Lazy;
