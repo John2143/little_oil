@@ -119,6 +119,7 @@ pub fn auto_roll(settings: &Settings, path: &str, times: i64) -> Option<RollResu
 }
 
 fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
+    println!("checking roll: {}", item_text);
     let maybe_name = item_text
         .lines()
         .filter(|s| s.contains(&config.item_name))

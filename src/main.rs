@@ -310,27 +310,51 @@ fn read_item_on_cursor() -> String {
             // The required protocol (ext-data-control, or wlr-data-control version 2) is there,
             // but there are no seats. Unfortunately, at least one seat is needed to check for the
             // primary clipboard support.
+            println!("no seats, cannot check for primary selection support");
+            return String::new();
         },
         Err(PrimarySelectionCheckError::MissingProtocol) => {
             // The data-control protocol (required for wl-clipboard-rs operation) is not
             // supported by the compositor.
+            println!("data-control protocol not supported");
+            return String::new();
         },
-        Err(_) => {
+        Err(e) => {
+            println!("error checking for primary selection support: {:?}", e);
+            return String::new();
             // Some communication error occurred.
         }
+    }
+
+    // clear the clipboard
+    {
+        use wl_clipboard_rs::copy::{copy, MimeType, Options, Source};
+
+        let opts = Options::new();
+        copy(opts, Source::Bytes([].into()), MimeType::Autodetect).unwrap();
     }
 
 
     let mut i = 0;
     loop {
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        //inputbot::KeybdKey::CKey.press();
-        std::thread::sleep(std::time::Duration::from_millis(rand::random_range(4..25)));
-        //inputbot::KeybdKey::CKey.release();
+        {
+            let mut device = FAKE_DEVICE.lock().unwrap();
+            // press ctrl alt c
+            device.press(key_codes::KEY_LEFTCTRL).unwrap();
+            device.press(key_codes::KEY_LEFTALT).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            device.press(key_codes::KEY_C).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(rand::random_range(4..25)));
+            device.release(key_codes::KEY_C).unwrap();
+            device.release(key_codes::KEY_LEFTALT).unwrap();
+            device.release(key_codes::KEY_LEFTCTRL).unwrap();
+
+        }
 
         //250 ms total
         for _ in 0..50 {
             std::thread::sleep(std::time::Duration::from_millis(5));
+
 
             use wl_clipboard_rs::{paste::{get_contents, ClipboardType, Error, MimeType, Seat}};
 
@@ -338,7 +362,11 @@ fn read_item_on_cursor() -> String {
                 Ok((mut pipe, _x)) => {
                     let mut contents = vec![];
                     pipe.read_to_end(&mut contents).unwrap();
-                    return String::from_utf8_lossy(&contents).to_string();
+                    let clip_res = String::from_utf8_lossy(&contents);;
+                    if clip_res.len() > 0 {
+                        println!("Got Clipboard!");
+                        return clip_res.to_string();
+                    }
                 }
                 Err(Error::NoSeats) => {
                     println!("no seats");
@@ -357,6 +385,7 @@ fn read_item_on_cursor() -> String {
 
         i += 1;
         if i > 5 {
+                println!("clipboard was always empty, giving up");
             panic!("could not read item on cursor");
         }
 
