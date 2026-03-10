@@ -69,7 +69,7 @@ pub fn auto_roll(settings: &Settings, path: &str, times: i64) -> Option<RollResu
         println!("alt");
         let item = read_item_on_cursor();
         res = check_roll(&item, &config);
-        if true || res.has_mod {
+        if res.has_mod {
             println!("got mod");
             break;
         }
@@ -119,23 +119,84 @@ pub fn auto_roll(settings: &Settings, path: &str, times: i64) -> Option<RollResu
 }
 
 fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
-    println!("checking roll: {}", item_text);
-    let maybe_name = item_text
-        .lines()
-        .filter(|s| s.contains(&config.item_name))
-        .nth(0)
-        .unwrap();
+    //println!("checking roll: {}", item_text);
+    //println!("looking for: {}", config.item_name);
 
-    dbg!(&item_text.lines().collect::<Vec<_>>()[8..]);
+
+    //dbg!(&item_text.lines().collect::<Vec<_>>()[8..]);
+
+    // { Prefix Modifier \"Notable\" (Tier: 1) — Caster, Speed }
+    // or
+    // { Suffix Modifier \"Notable\" (Tier: 1) }
+    let regex = regex::Regex::new(r#"\{ (Prefix|Suffix) Modifier \"([^\"]*)\" \(Tier: (\d+)\) —? ?([^\}]*)\)?"#).unwrap();
+
+    let mut modlines = vec![];
+    let mut cur_mod_line = None;
+    for line in item_text.lines() {
+        if let Some(mod_line) = cur_mod_line {
+            let parsed = regex.captures(mod_line).unwrap();
+            let is_prefix = &parsed[1] == "Prefix";
+            let notable_name = &parsed[2];
+            let tier = parsed[3].parse::<i32>().unwrap();
+            let tags = parsed
+                .get(4)
+                .map_or("", |m| m.as_str())
+                .split(", ")
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>();
+
+            modlines.push(ParsedMod {
+                is_prefix,
+                notable_name: notable_name.to_string(),
+                tier,
+                tags,
+                full_text: line.to_string(),
+            });
+
+            cur_mod_line = None;
+        }
+        if line.starts_with("{") && line.ends_with("}") {
+            cur_mod_line = Some(line);
+        }
+    }
+
+    println!("special lines: {:?}", modlines);
+
+    #[derive(Debug)]
+    struct ParsedMod {
+        is_prefix: bool,
+        notable_name: String,
+        tier: i32,
+        tags: Vec<String>,
+        full_text: String,
+    }
+
+    let mut has_prefix = false;
+    let mut has_suffix = false;
+    let mut has_mod = false;
+    for modline in &modlines {
+        if modline.is_prefix {
+            has_prefix = true;
+        } else {
+            has_suffix = true;
+        }
+
+        for mod_config in &config.mods {
+            if modline.notable_name == mod_config.name {
+                println!("found notable name match: {}", mod_config.name);
+                has_mod = true;
+            }
+            if modline.full_text.contains(&mod_config.name) {
+                println!("found full text match: {}", mod_config.name);
+                has_mod = true;
+            }
+        }
+    }
 
     RollResult {
-        has_prefix: !maybe_name.starts_with(&config.item_name),
-        has_suffix: !maybe_name.ends_with(&config.item_name),
-        has_mod: config
-            .mods
-            .iter()
-            .map(|x| x.name.as_str())
-            .any(|x| item_text.to_lowercase().contains(&x)),
+        has_prefix,
+        has_suffix,
+        has_mod,
     }
 }
 

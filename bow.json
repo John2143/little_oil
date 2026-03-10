@@ -1,0 +1,42 @@
+{
+  "item_name": "Spine Bow",
+  "mods": [
+    {
+      "name": "Carbonising",
+      "is_prefix": true
+    },
+    {
+      "name": "Crystallising",
+      "is_prefix": true
+    },
+    {
+      "name": "Crystalising",
+      "is_prefix": true
+    },
+    {
+      "name": "Vaporising",
+      "is_prefix": true
+    },
+    {
+      "name": "Vapourising",
+      "is_prefix": true
+    },
+    {
+      "name": "Flaring",
+      "is_prefix": true
+    },
+    {
+      "name": "Merciless",
+      "is_prefix": true
+    },
+    {
+      "name": "Dictator's",
+      "is_prefix": true
+    },
+    {
+      "name": "of Many",
+      "is_prefix": false
+    }
+  ],
+  "auto_aug_regal": false
+}

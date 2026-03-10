@@ -1,0 +1,10 @@
+{
+  "item_name": "Medium Cluster Jewel",
+  "mods": [
+    {
+      "name": "Notable",
+      "is_prefix": true
+    }
+  ],
+  "auto_aug_regal": true
+}
