@@ -32,7 +32,6 @@ impl Settings {
     fn screenshot(&self) -> anyhow::Result<ScreenshotData> {
         match self.screenshot_method {
             ScreenshotMethod::Grim => take_screenshot_grim(),
-            ScreenshotMethod::Scrot => take_screenshot_scrap(),
         }
     }
 }
@@ -52,8 +51,6 @@ struct InvPositions {
 pub enum ScreenshotMethod {
     /// Wayland users should use an external program like "grim"
     Grim,
-    /// Windows and Linux users can use scrot
-    Scrot,
 }
 
 use std::fs;
@@ -66,7 +63,7 @@ static DEFAULT_SETTINGS: Settings = Settings {
     div_delay: 100,
     inv_colors: None,
     screen_height: Some(1440),
-    screenshot_method: ScreenshotMethod::Scrot,
+    screenshot_method: ScreenshotMethod::Grim,
     pos: InvPositions {
         alt: (149, 368),
         aug: (303, 444),
@@ -274,14 +271,57 @@ fn split_space(input: &str) -> (&str, &str) {
     return (input, "");
 }
 
-use clipboard::ClipboardContext;
-use clipboard::ClipboardProvider;
 
-static CTX: Lazy<Mutex<ClipboardContext>> = Lazy::new(|| Mutex::new(ClipboardContext::new().unwrap()));
+struct ClipboardContext {
+    inner: String,
+}
+
+impl ClipboardContext {
+    fn new() -> anyhow::Result<Self> {
+        Ok(Self {
+            inner: String::new(),
+        })
+    }
+
+    fn set_contents(&mut self, s: String) -> anyhow::Result<()> {
+        self.inner = s;
+        Ok(())
+    }
+
+    fn get_contents(&mut self) -> anyhow::Result<String> {
+        Ok(self.inner.clone())
+    }
+}
 
 fn read_item_on_cursor() -> String {
-    let mut safectx = CTX.lock().unwrap();
-    safectx.set_contents("".into()).unwrap();
+    use wl_clipboard_rs::utils::{is_primary_selection_supported, PrimarySelectionCheckError};
+
+    match is_primary_selection_supported() {
+        Ok(supported) => {
+            // We have our definitive result. False means that ext/wlr-data-control is present
+            // and did not signal the primary selection support, or that only wlr-data-control
+            // version 1 is present (which does not support primary selection).
+            println!("primary selection supported: {}", supported);
+        },
+        Err(PrimarySelectionCheckError::NoSeats) => {
+            // Impossible to give a definitive result. Primary selection may or may not be
+            // supported.
+
+            // The required protocol (ext-data-control, or wlr-data-control version 2) is there,
+            // but there are no seats. Unfortunately, at least one seat is needed to check for the
+            // primary clipboard support.
+        },
+        Err(PrimarySelectionCheckError::MissingProtocol) => {
+            // The data-control protocol (required for wl-clipboard-rs operation) is not
+            // supported by the compositor.
+        },
+        Err(_) => {
+            // Some communication error occurred.
+        }
+    }
+
+
+    let mut i = 0;
     loop {
         std::thread::sleep(std::time::Duration::from_millis(5));
         //inputbot::KeybdKey::CKey.press();
@@ -291,14 +331,33 @@ fn read_item_on_cursor() -> String {
         //250 ms total
         for _ in 0..50 {
             std::thread::sleep(std::time::Duration::from_millis(5));
-            match safectx.get_contents() {
-                Ok(s) => {
-                    if s != "" {
-                        return s;
-                    }
+
+            use wl_clipboard_rs::{paste::{get_contents, ClipboardType, Error, MimeType, Seat}};
+
+            match get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Text) {
+                Ok((mut pipe, _x)) => {
+                    let mut contents = vec![];
+                    pipe.read_to_end(&mut contents).unwrap();
+                    return String::from_utf8_lossy(&contents).to_string();
                 }
-                Err(_) => {}
+                Err(Error::NoSeats) => {
+                    println!("no seats");
+                }
+                Err(Error::ClipboardEmpty) => {
+                    println!("empty");
+                }
+                Err(Error::NoMimeType) => {
+                    println!("no mimetype");
+                }
+                Err(e) => {
+                    println!("clipboard error: {:?}", e);
+                }
             }
+        }
+
+        i += 1;
+        if i > 5 {
+            panic!("could not read item on cursor");
         }
 
         std::thread::sleep(std::time::Duration::from_millis(rand::random_range(1..150)));
@@ -609,46 +668,46 @@ pub fn take_screenshot_grim() -> anyhow::Result<ScreenshotData> {
     })
 }
 
-pub fn take_screenshot_scrap() -> anyhow::Result<ScreenshotData> {
-    println!("taking screenshot...");
-    let disp = scrap::Display::primary().unwrap();
-    //let disps = scrap::Display::all().unwrap();
-    let mut cap = scrap::Capturer::new(disp).unwrap();
-    //for disp in disps.into_iter().skip(2) {
-    //cap = scrap::Capturer::new(disp).unwrap();
-    //println!("doing cap");
-    //break;
+//pub fn take_screenshot_scrap() -> anyhow::Result<ScreenshotData> {
+    //println!("taking screenshot...");
+    //let disp = scrap::Display::primary().unwrap();
+    ////let disps = scrap::Display::all().unwrap();
+    //let mut cap = scrap::Capturer::new(disp).unwrap();
+    ////for disp in disps.into_iter().skip(2) {
+    ////cap = scrap::Capturer::new(disp).unwrap();
+    ////println!("doing cap");
+    ////break;
+    ////}
+
+    //let width = cap.width();
+    //let height = cap.height();
+
+    //let sleep = 50;
+
+    ////max 2 seconds before fail
+    //let maxloops = 2000 / sleep;
+
+    //println!("trying to screenshot...");
+
+    //for _ in 0..maxloops {
+        //match cap.frame() {
+            //Ok(fr) => {
+                //println!("got screenshot");
+                //return Ok(ScreenshotData {
+                    //height,
+                    //width,
+                    //pixels: fr.to_vec(),
+                //});
+            //}
+            //Err(e) => {
+                //println!("screenshot failed... {}", e);
+            //}
+        //}
+        //std::thread::sleep(std::time::Duration::from_millis(sleep));
     //}
 
-    let width = cap.width();
-    let height = cap.height();
-
-    let sleep = 50;
-
-    //max 2 seconds before fail
-    let maxloops = 2000 / sleep;
-
-    println!("trying to screenshot...");
-
-    for _ in 0..maxloops {
-        match cap.frame() {
-            Ok(fr) => {
-                println!("got screenshot");
-                return Ok(ScreenshotData {
-                    height,
-                    width,
-                    pixels: fr.to_vec(),
-                });
-            }
-            Err(e) => {
-                println!("screenshot failed... {}", e);
-            }
-        }
-        std::thread::sleep(std::time::Duration::from_millis(sleep));
-    }
-
-    bail!("was not able to take screenshot after {maxloops} tries");
-}
+    //bail!("was not able to take screenshot after {maxloops} tries");
+//}
 
 impl ScreenshotData {
     //return RGBA8888 pixel as u32
