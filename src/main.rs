@@ -158,7 +158,6 @@ fn main() -> anyhow::Result<()> {
     //event_queue.roundtrip(&mut dat);
     //event_queue.blocking_dispatch(&mut dat);
 
-    let mut _rand = rand::thread_rng();
     let set = load_config(CONFIG_PATH, Some(&DEFAULT_SETTINGS))?;
 
     *SETTINGS.write().unwrap() = set;
@@ -278,18 +277,15 @@ fn split_space(input: &str) -> (&str, &str) {
 use clipboard::ClipboardContext;
 use clipboard::ClipboardProvider;
 
+static CTX: Lazy<Mutex<ClipboardContext>> = Lazy::new(|| Mutex::new(ClipboardContext::new().unwrap()));
+
 fn read_item_on_cursor() -> String {
-    static mut CTX: Option<ClipboardContext> = None;
-
-    let safectx =
-        unsafe { CTX.get_or_insert_with(|| clipboard::ClipboardProvider::new().unwrap()) };
+    let mut safectx = CTX.lock().unwrap();
     safectx.set_contents("".into()).unwrap();
-    let mut trng = rand::thread_rng();
-
     loop {
         std::thread::sleep(std::time::Duration::from_millis(5));
         //inputbot::KeybdKey::CKey.press();
-        std::thread::sleep(std::time::Duration::from_millis(trng.gen_range(4..25)));
+        std::thread::sleep(std::time::Duration::from_millis(rand::random_range(4..25)));
         //inputbot::KeybdKey::CKey.release();
 
         //250 ms total
@@ -305,7 +301,7 @@ fn read_item_on_cursor() -> String {
             }
         }
 
-        std::thread::sleep(std::time::Duration::from_millis(trng.gen_range(1..150)));
+        std::thread::sleep(std::time::Duration::from_millis(rand::random_range(1..150)));
     }
 }
 

@@ -187,13 +187,14 @@ impl ChaosRecipe {
 
     fn get_json(&self) -> StashAPIResult {
         let d = ureq::get(&self.get_url())
-            .set("Accept", "application/json")
-            .set("Cookie", &format!("POESESSID={}", self.session_id))
+            .header("Accept", "application/json")
+            .header("Cookie", &format!("POESESSID={}", self.session_id))
             .call();
 
         //let apir2 = d.unwrap().into_string().unwrap();
         //dbg!(apir2);
-        let apir: StashAPIResult = d.unwrap().into_json().unwrap();
+        //let apir: StashAPIResult = d.unwrap().json().unwrap();
+        let apir: StashAPIResult = todo!();
 
         for tab in &apir.tabs {
             if Some(tab.i) == self.tab_index {
