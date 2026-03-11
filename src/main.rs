@@ -301,7 +301,7 @@ fn read_item_on_cursor() -> String {
             // We have our definitive result. False means that ext/wlr-data-control is present
             // and did not signal the primary selection support, or that only wlr-data-control
             // version 1 is present (which does not support primary selection).
-            println!("primary selection supported: {}", supported);
+            //println!("primary selection supported: {}", supported);
         },
         Err(PrimarySelectionCheckError::NoSeats) => {
             // Impossible to give a definitive result. Primary selection may or may not be
@@ -364,7 +364,6 @@ fn read_item_on_cursor() -> String {
                     pipe.read_to_end(&mut contents).unwrap();
                     let clip_res = String::from_utf8_lossy(&contents);;
                     if clip_res.len() > 0 {
-                        println!("Got Clipboard!");
                         return clip_res.to_string();
                     }
                 }
@@ -487,6 +486,7 @@ fn command_line() {
                     &AutoRollConfig {
                         auto_aug_regal: false,
                         item_name: "Medium Cluster Jewel".to_string(),
+                        any_two_t1: false,
                         mods: vec![
                             AutoRollMod {
                                 name: "heraldry".into(),

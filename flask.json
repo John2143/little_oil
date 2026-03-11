@@ -1,0 +1,11 @@
+{
+  "item_name": "Warlock Boots",
+  "mods": [
+    {
+      "name": "tailwind",
+      "is_prefix": false
+    }
+  ],
+  "auto_aug_regal": false,
+  "any_two_t1": true
+}

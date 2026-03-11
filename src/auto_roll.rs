@@ -13,6 +13,8 @@ pub struct AutoRollConfig {
     pub item_name: String,
     pub mods: Vec<AutoRollMod>,
     pub auto_aug_regal: bool,
+    #[serde(default)]
+    pub any_two_t1: bool,
 }
 
 impl AutoRollConfig {
@@ -160,8 +162,6 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
         }
     }
 
-    println!("special lines: {:?}", modlines);
-
     #[derive(Debug)]
     struct ParsedMod {
         is_prefix: bool,
@@ -186,11 +186,25 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
                 println!("found notable name match: {}", mod_config.name);
                 has_mod = true;
             }
-            if modline.full_text.contains(&mod_config.name) {
+            if modline.full_text.to_lowercase().contains(&mod_config.name.to_lowercase()) {
                 println!("found full text match: {}", mod_config.name);
                 has_mod = true;
             }
         }
+    }
+
+    let prefixes = modlines.iter().filter(|m| m.is_prefix);
+    let suffixes = modlines.iter().filter(|m| !m.is_prefix);
+    let prefixes_tiers = prefixes.clone().map(|m| m.tier).collect::<Vec<_>>();
+    let suffixes_tiers = suffixes.clone().map(|m| m.tier).collect::<Vec<_>>();
+    println!("Got {} mods. Tiers: {} / {}", modlines.len(), format!("{:?}", prefixes_tiers), format!("{:?}", suffixes_tiers));
+    println!("Prefixes: {}", prefixes.clone().map(|m| m.notable_name.clone()).collect::<Vec<_>>().join(", "));
+    println!("Suffixes: {}", suffixes.clone().map(|m| m.notable_name.clone()).collect::<Vec<_>>().join(", "));
+
+    //println!("any two t1: {}, any t1: {}", config.any_two_t1, modlines.iter().any(|m| m.tier == 1));
+    if modlines.iter().all(|m| m.tier == 1) && modlines.len() == 2 && config.any_two_t1 {
+        println!("all mods are t1 and any_two_t1 is enabled");
+        has_mod = true;
     }
 
     RollResult {
