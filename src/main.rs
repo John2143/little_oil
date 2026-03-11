@@ -252,11 +252,37 @@ trait ClipboardInterface {
     fn check_supported(&self) -> anyhow::Result<bool>;
 }
 
+pub enum AbstractMouseButton {
+    Left,
+    Right,
+}
+
+pub enum AbstractKey {
+    Ctrl,
+    Alt,
+    C,
+}
+
 trait MouseKeyboardInterface {
-    fn click_release(&self, button: Button) -> anyhow::Result<()>;
+    /// Click and release the mouse button at current position
+    fn click_release(&self, button: AbstractMouseButton) -> anyhow::Result<()>;
+    /// Move the mouse to the given coordinates
     fn move_mouse(&self, x: i32, y: i32) -> anyhow::Result<()>;
-    fn press(&self, key: u16) -> anyhow::Result<()>;
-    fn release(&self, key: u16) -> anyhow::Result<()>;
+
+    fn press(&self, key: AbstractKey) -> anyhow::Result<()>;
+    fn release(&self, key: AbstractKey) -> anyhow::Result<()>;
+
+    fn click(&self, x: i32, y: i32) -> anyhow::Result<()> {
+        self.move_mouse(x, y)?;
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        self.click_release(AbstractMouseButton::Left)
+    }
+
+    fn click_right(&self, x: i32, y: i32) -> anyhow::Result<()> {
+        self.move_mouse(x, y)?;
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        self.click_release(AbstractMouseButton::Right)
+    }
 }
 
 struct WaylandClipboard;
@@ -295,9 +321,8 @@ impl ClipboardInterface for WaylandClipboard {
     }
 }
 
-fn read_item_on_cursor(clip: impl ClipboardInterface) -> String {
+fn read_item_on_cursor(clip: impl ClipboardInterface, kb: impl MouseKeyboardInterface) -> String {
     // clear the clipboard
-    clip.write_clipboard("").unwrap();
 
 
     let mut i = 0;
@@ -305,15 +330,14 @@ fn read_item_on_cursor(clip: impl ClipboardInterface) -> String {
         {
             let mut device = FAKE_DEVICE.lock().unwrap();
             // press ctrl alt c
-            device.press(key_codes::KEY_LEFTCTRL).unwrap();
-            device.press(key_codes::KEY_LEFTALT).unwrap();
+            kb.press(AbstractKey::Ctrl).unwrap();
+            kb.press(AbstractKey::Alt).unwrap();
             std::thread::sleep(std::time::Duration::from_millis(5));
-            device.press(key_codes::KEY_C).unwrap();
+            kb.press(AbstractKey::C).unwrap();
             std::thread::sleep(std::time::Duration::from_millis(rand::random_range(4..25)));
-            device.release(key_codes::KEY_C).unwrap();
-            device.release(key_codes::KEY_LEFTALT).unwrap();
-            device.release(key_codes::KEY_LEFTCTRL).unwrap();
-
+            kb.release(AbstractKey::C).unwrap();
+            kb.release(AbstractKey::Alt).unwrap();
+            kb.release(AbstractKey::Ctrl).unwrap();
         }
 
         //250 ms total
