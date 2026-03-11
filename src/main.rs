@@ -246,46 +246,58 @@ fn split_space(input: &str) -> (&str, &str) {
     return (input, "");
 }
 
-fn read_item_on_cursor() -> String {
-    use wl_clipboard_rs::utils::{is_primary_selection_supported, PrimarySelectionCheckError};
+trait ClipboardInterface {
+    fn read_clipboard(&self) -> anyhow::Result<String>;
+    fn write_clipboard(&self, text: &str) -> anyhow::Result<()>;
+    fn check_supported(&self) -> anyhow::Result<bool>;
+}
 
-    match is_primary_selection_supported() {
-        Ok(_supported) => {
-            // We have our definitive result. False means that ext/wlr-data-control is present
-            // and did not signal the primary selection support, or that only wlr-data-control
-            // version 1 is present (which does not support primary selection).
-            //println!("primary selection supported: {}", supported);
-        },
-        Err(PrimarySelectionCheckError::NoSeats) => {
-            // Impossible to give a definitive result. Primary selection may or may not be
-            // supported.
+trait MouseKeyboardInterface {
+    fn click_release(&self, button: Button) -> anyhow::Result<()>;
+    fn move_mouse(&self, x: i32, y: i32) -> anyhow::Result<()>;
+    fn press(&self, key: u16) -> anyhow::Result<()>;
+    fn release(&self, key: u16) -> anyhow::Result<()>;
+}
 
-            // The required protocol (ext-data-control, or wlr-data-control version 2) is there,
-            // but there are no seats. Unfortunately, at least one seat is needed to check for the
-            // primary clipboard support.
-            println!("no seats, cannot check for primary selection support");
-            return String::new();
-        },
-        Err(PrimarySelectionCheckError::MissingProtocol) => {
-            // The data-control protocol (required for wl-clipboard-rs operation) is not
-            // supported by the compositor.
-            println!("data-control protocol not supported");
-            return String::new();
-        },
-        Err(e) => {
-            println!("error checking for primary selection support: {:?}", e);
-            return String::new();
-            // Some communication error occurred.
-        }
+struct WaylandClipboard;
+
+impl ClipboardInterface for WaylandClipboard {
+    fn read_clipboard(&self) -> anyhow::Result<String> {
+        Ok(read_item_on_cursor())
     }
 
-    // clear the clipboard
-    {
+    fn write_clipboard(&self, text: &str) -> anyhow::Result<()> {
         use wl_clipboard_rs::copy::{copy, MimeType, Options, Source};
 
         let opts = Options::new();
-        copy(opts, Source::Bytes([].into()), MimeType::Autodetect).unwrap();
+        copy(opts, Source::Bytes(text.as_bytes().into()), MimeType::Autodetect).unwrap();
+        Ok(())
     }
+
+    fn check_supported(&self) -> anyhow::Result<bool> {
+        use wl_clipboard_rs::utils::{is_primary_selection_supported, PrimarySelectionCheckError};
+
+        match is_primary_selection_supported() {
+            Ok(supported) => Ok(supported),
+            Err(PrimarySelectionCheckError::NoSeats) => {
+                println!("no seats, cannot check for primary selection support");
+                Ok(false)
+            }
+            Err(PrimarySelectionCheckError::MissingProtocol) => {
+                println!("data-control protocol not supported");
+                Ok(false)
+            }
+            Err(e) => {
+                println!("error checking for primary selection support: {:?}", e);
+                Ok(false)
+            }
+        }
+    }
+}
+
+fn read_item_on_cursor(clip: impl ClipboardInterface) -> String {
+    // clear the clipboard
+    clip.write_clipboard("").unwrap();
 
 
     let mut i = 0;
