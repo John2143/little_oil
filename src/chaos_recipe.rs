@@ -9,6 +9,7 @@ pub struct ChaosRecipe {
     tab_index: Option<usize>,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize, Debug, Clone)]
 struct Color {
     r: usize,
@@ -185,6 +186,7 @@ impl ChaosRecipe {
         )
     }
 
+    #[allow(unused)]
     fn get_json(&self) -> StashAPIResult {
         let d = ureq::get(&self.get_url())
             .header("Accept", "application/json")
@@ -237,7 +239,7 @@ struct ItemList<'a> {
 }
 
 impl StashAPIResult {
-    fn create_item_list(&mut self) -> ItemList {
+    fn create_item_list<'a>(&'a mut self) -> ItemList<'a> {
         let mut il = ItemList::default();
         for item in self.items.iter_mut() {
             let ty = item.get_category();
@@ -422,7 +424,8 @@ pub fn get_tally(cr_config: &ChaosRecipe) {
 
 pub fn do_recipe(cr_config: &ChaosRecipe, amt: usize) {
     let mut apir = cr_config.get_json();
-    for i in 0..amt {
+    for _i in 0..amt {
+    #[allow(unused)]
         let item_list = apir.create_item_list();
         item_list.take();
     }

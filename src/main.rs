@@ -1,10 +1,7 @@
 use anyhow::bail;
 use mouse_keyboard_input::{key_codes, Button, VirtualDevice};
 //use inputbot::KeybdKey;
-use rand::Rng;
 use tracing::{debug, info, trace};
-use wayland_client::protocol::wl_registry;
-use wayland_client::Connection;
 
 use std::io::{self, BufRead, Cursor};
 use std::process::Command;
@@ -114,34 +111,12 @@ where
     }
 }
 
-struct AppData;
-impl wayland_client::Dispatch<wl_registry::WlRegistry, ()> for AppData {
-    fn event(
-        _state: &mut Self,
-        _: &wl_registry::WlRegistry,
-        event: wl_registry::Event,
-        _: &(),
-        _: &Connection,
-        _: &wayland_client::QueueHandle<AppData>,
-    ) {
-        // When receiving events from the wl_registry, we are only interested in the
-        // `global` event, which signals a new available global.
-        // When receiving this event, we just print its characteristics in this example.
-        if let wl_registry::Event::Global {
-            name,
-            interface,
-            version,
-        } = event
-        {
-            println!("[{}] {} (v{})", name, interface, version);
-        }
-    }
-}
-
 fn main() -> anyhow::Result<()> {
-    FAKE_DEVICE.lock().unwrap().synchronize();
     tracing_subscriber::fmt::init();
     tracing::info!("Starting main loop");
+
+    // plug in our fake input device
+    let _ = FAKE_DEVICE.lock().unwrap().synchronize();
 
     // init wayland
     //let conn = Connection::connect_to_env().expect("Wayland not initialized");
@@ -271,33 +246,11 @@ fn split_space(input: &str) -> (&str, &str) {
     return (input, "");
 }
 
-
-struct ClipboardContext {
-    inner: String,
-}
-
-impl ClipboardContext {
-    fn new() -> anyhow::Result<Self> {
-        Ok(Self {
-            inner: String::new(),
-        })
-    }
-
-    fn set_contents(&mut self, s: String) -> anyhow::Result<()> {
-        self.inner = s;
-        Ok(())
-    }
-
-    fn get_contents(&mut self) -> anyhow::Result<String> {
-        Ok(self.inner.clone())
-    }
-}
-
 fn read_item_on_cursor() -> String {
     use wl_clipboard_rs::utils::{is_primary_selection_supported, PrimarySelectionCheckError};
 
     match is_primary_selection_supported() {
-        Ok(supported) => {
+        Ok(_supported) => {
             // We have our definitive result. False means that ext/wlr-data-control is present
             // and did not signal the primary selection support, or that only wlr-data-control
             // version 1 is present (which does not support primary selection).
@@ -362,7 +315,7 @@ fn read_item_on_cursor() -> String {
                 Ok((mut pipe, _x)) => {
                     let mut contents = vec![];
                     pipe.read_to_end(&mut contents).unwrap();
-                    let clip_res = String::from_utf8_lossy(&contents);;
+                    let clip_res = String::from_utf8_lossy(&contents);
                     if clip_res.len() > 0 {
                         return clip_res.to_string();
                     }
@@ -747,15 +700,12 @@ impl ScreenshotData {
         let pos: usize = y * self.width + x;
         let pos = pos * 4; //pixel format ARGB8888;
 
-        //TODO find the rust idiomatic way to do this
-        unsafe {
-            std::mem::transmute([
-                self.pixels[pos + 3],
-                self.pixels[pos + 2],
-                self.pixels[pos + 1],
-                self.pixels[pos],
-            ])
-        }
+        u32::from_ne_bytes([
+            self.pixels[pos + 3],
+            self.pixels[pos + 2],
+            self.pixels[pos + 1],
+            self.pixels[pos],
+        ])
     }
 }
 

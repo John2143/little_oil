@@ -120,6 +120,16 @@ pub fn auto_roll(settings: &Settings, path: &str, times: i64) -> Option<RollResu
     Some(res)
 }
 
+#[derive(Debug)]
+#[allow(unused)]
+pub struct ParsedMod {
+    pub is_prefix: bool,
+    pub notable_name: String,
+    pub tier: i32,
+    pub tags: Vec<String>,
+    pub full_text: String,
+}
+
 fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
     //println!("checking roll: {}", item_text);
     //println!("looking for: {}", config.item_name);
@@ -160,15 +170,6 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
         if line.starts_with("{") && line.ends_with("}") && !line.starts_with("{ Implicit Modifier") {
             cur_mod_line = Some(line);
         }
-    }
-
-    #[derive(Debug)]
-    struct ParsedMod {
-        is_prefix: bool,
-        notable_name: String,
-        tier: i32,
-        tags: Vec<String>,
-        full_text: String,
     }
 
     let mut has_prefix = false;

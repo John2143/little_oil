@@ -1,3 +1,4 @@
+#![allow(dead_code, unused)]
 use std::{fmt::Display, ops::Range};
 
 use anyhow::Context;
