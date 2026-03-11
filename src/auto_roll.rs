@@ -54,7 +54,7 @@ pub fn auto_roll(settings: &Settings, path: &str, times: i64) -> Option<RollResu
     assert!(times > 0);
 
     let sleep_click = 20;
-    let sleep_read = 200;
+    let sleep_read = 150;
 
     let mut i = 0;
     let mut res;
@@ -157,7 +157,7 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
 
             cur_mod_line = None;
         }
-        if line.starts_with("{") && line.ends_with("}") {
+        if line.starts_with("{") && line.ends_with("}") && !line.starts_with("{ Implicit Modifier") {
             cur_mod_line = Some(line);
         }
     }
