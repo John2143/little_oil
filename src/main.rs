@@ -440,6 +440,7 @@ fn command_line() {
                         auto_aug_regal: false,
                         item_name: "Medium Cluster Jewel".to_string(),
                         any_two_t1: false,
+                        needs_prefix_and_suffix: false,
                         mods: vec![
                             AutoRollMod {
                                 name: "heraldry".into(),

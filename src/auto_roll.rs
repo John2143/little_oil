@@ -15,6 +15,8 @@ pub struct AutoRollConfig {
     pub auto_aug_regal: bool,
     #[serde(default)]
     pub any_two_t1: bool,
+    #[serde(default)]
+    pub needs_prefix_and_suffix: bool,
 }
 
 impl AutoRollConfig {
@@ -172,9 +174,10 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
         }
     }
 
-    let mut has_prefix = false;
-    let mut has_suffix = false;
-    let mut has_mod = false;
+    let mut has_prefix = false; //has any prefix
+    let mut has_suffix = false; //has any suffix
+    let mut has_mod_prefix = false; //has a matching prefix
+    let mut has_mod_suffix = false; //has a matching suffix
     for modline in &modlines {
         if modline.is_prefix {
             has_prefix = true;
@@ -183,15 +186,32 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
         }
 
         for mod_config in &config.mods {
+            let mut got_match = false;
             if modline.notable_name == mod_config.name {
                 println!("found notable name match: {}", mod_config.name);
-                has_mod = true;
+                got_match = true;
             }
             if modline.full_text.to_lowercase().contains(&mod_config.name.to_lowercase()) {
                 println!("found full text match: {}", mod_config.name);
-                has_mod = true;
+                got_match = true;
+            }
+
+            if got_match {
+                if mod_config.is_prefix {
+                    has_mod_prefix = true;
+                } else {
+                    has_mod_suffix = true;
+                }
             }
         }
+    }
+
+    // if we have any of the mods, then we can set this to true
+    let mut has_mod = has_mod_prefix || has_mod_suffix;
+    // if this config flag is set, then only set has_mod to true if we have both a prefix and
+    // suffix mod matching
+    if config.needs_prefix_and_suffix {
+        has_mod = has_mod_prefix && has_mod_suffix;
     }
 
     let prefixes = modlines.iter().filter(|m| m.is_prefix);
