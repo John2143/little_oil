@@ -247,7 +247,7 @@ fn split_space(input: &str) -> (&str, &str) {
 }
 
 trait ClipboardInterface {
-    fn read_clipboard(&self) -> anyhow::Result<String>;
+    fn read_clipboard(&self) -> anyhow::Result<Option<String>>;
     fn write_clipboard(&self, text: &str) -> anyhow::Result<()>;
     fn check_supported(&self) -> anyhow::Result<bool>;
 }
@@ -288,8 +288,36 @@ trait MouseKeyboardInterface {
 struct WaylandClipboard;
 
 impl ClipboardInterface for WaylandClipboard {
-    fn read_clipboard(&self) -> anyhow::Result<String> {
-        Ok(read_item_on_cursor())
+    fn read_clipboard(&self) -> anyhow::Result<Option<String>> {
+        use wl_clipboard_rs::{paste::{get_contents, ClipboardType, Error, MimeType, Seat}};
+
+        match get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Text) {
+            Ok((mut pipe, _x)) => {
+                let mut contents = vec![];
+                pipe.read_to_end(&mut contents).unwrap();
+                let clip_res = String::from_utf8_lossy(&contents);
+
+                // if its empty, then we haven't read an item
+                if clip_res.len() > 0 {
+                    return Ok(Some(clip_res.to_string()));
+                }
+                return Ok(None);
+            }
+            Err(Error::NoSeats) => {
+                tracing::debug!("no seats found during wayland clipboard read");
+            }
+            Err(Error::ClipboardEmpty) => {
+                tracing::debug!("empty clipboard even though we have probably set it?");,
+            }
+            Err(Error::NoMimeType) => {
+                tracing::debug!("no mimetype");
+            }
+            Err(e) => {
+                tracing::error!("clipboard error: {:?}", e);
+            }
+        }
+        // Try again later? maybe POE has not copied the item yet
+        Ok(None)
     }
 
     fn write_clipboard(&self, text: &str) -> anyhow::Result<()> {
@@ -321,52 +349,35 @@ impl ClipboardInterface for WaylandClipboard {
     }
 }
 
-fn read_item_on_cursor(clip: impl ClipboardInterface, kb: impl MouseKeyboardInterface) -> String {
+fn read_item_on_cursor(clip: impl ClipboardInterface, kb: impl MouseKeyboardInterface) -> anyhow::Result<String> {
     // clear the clipboard
-
+    clip.write_clipboard("").unwrap();
 
     let mut i = 0;
     loop {
         {
-            let mut device = FAKE_DEVICE.lock().unwrap();
             // press ctrl alt c
-            kb.press(AbstractKey::Ctrl).unwrap();
-            kb.press(AbstractKey::Alt).unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            kb.press(AbstractKey::C).unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(rand::random_range(4..25)));
-            kb.release(AbstractKey::C).unwrap();
-            kb.release(AbstractKey::Alt).unwrap();
-            kb.release(AbstractKey::Ctrl).unwrap();
+            kb.press(AbstractKey::Ctrl)?;
+            kb.press(AbstractKey::Alt)?;
+            std::thread::sleep(std::time::Duration::from_millis(rand::random_range(6..14)));
+            kb.press(AbstractKey::C)?;
+            std::thread::sleep(std::time::Duration::from_millis(rand::random_range(5..25)));
+            kb.release(AbstractKey::C)?;
+            std::thread::sleep(std::time::Duration::from_millis(rand::random_range(6..14)));
+            kb.release(AbstractKey::Alt)?;
+            kb.release(AbstractKey::Ctrl)?;
         }
 
         //250 ms total
         for _ in 0..50 {
             std::thread::sleep(std::time::Duration::from_millis(5));
 
-
-            use wl_clipboard_rs::{paste::{get_contents, ClipboardType, Error, MimeType, Seat}};
-
-            match get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Text) {
-                Ok((mut pipe, _x)) => {
-                    let mut contents = vec![];
-                    pipe.read_to_end(&mut contents).unwrap();
-                    let clip_res = String::from_utf8_lossy(&contents);
-                    if clip_res.len() > 0 {
-                        return clip_res.to_string();
-                    }
+            match clip.read_clipboard()? {
+                Some(item) => {
+                    return Ok(item);
                 }
-                Err(Error::NoSeats) => {
-                    println!("no seats");
-                }
-                Err(Error::ClipboardEmpty) => {
-                    println!("empty");
-                }
-                Err(Error::NoMimeType) => {
-                    println!("no mimetype");
-                }
-                Err(e) => {
-                    println!("clipboard error: {:?}", e);
+                None => {
+                    //clipboard is empty, try again
                 }
             }
         }
@@ -748,7 +759,8 @@ impl ScreenshotData {
 fn sort_quad(times: u32) -> anyhow::Result<()> {
     std::thread::sleep(std::time::Duration::from_millis(300));
 
-    let settings = SETTINGS.read().unwrap();
+    let settings = SETTINGS.read()
+        .map_err(|e| anyhow::error("Failed to take settings: {e:?}"))?;
     let (delay, height) = { (settings.pull_delay, settings.screen_height.unwrap_or(1080)) };
 
     let frame = settings.screenshot()?;
