@@ -164,7 +164,7 @@ fn main() -> anyhow::Result<()> {
                 .parse()
                 .expect("invalid number");
 
-            auto_roll::auto_roll(&SETTINGS.read().unwrap(), &file, times);
+            auto_roll::auto_roll(&file, times);
             return Ok(());
         }
         Some("reset_inv") => {
@@ -424,7 +424,7 @@ fn command_line() {
                 let (file, times) = split_space(rest);
                 println!("Loading chrome file {}", file);
 
-                match auto_roll::auto_roll(&SETTINGS.read().unwrap(), &file, times.parse().unwrap()) {
+                match auto_roll::auto_roll(&file, times.parse().unwrap()) {
                     None => println!("failed to roll"),
                     Some(res) => {
                         println!("{:?}", res);

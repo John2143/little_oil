@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{click, click_right, load_config, read_item_on_cursor, Settings};
+use crate::{click, click_right, load_config, read_item_on_cursor};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AutoRollMod {
@@ -36,7 +36,7 @@ pub struct RollResult {
     has_mod: bool,
 }
 
-pub fn auto_roll(settings: &Settings, path: &str, times: i64) -> Option<RollResult> {
+pub fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
     #![allow(unused_variables)]
     let alt = (155, 354);
     let aug = (300, 422);
@@ -44,7 +44,7 @@ pub fn auto_roll(settings: &Settings, path: &str, times: i64) -> Option<RollResu
     let slot = (444, 628);
 
     let config: AutoRollConfig = {
-        match load_config(&path, None) {
+        match load_config(path, None) {
             Ok(config) => config,
             Err(msg) => {
                 println!("{}", msg);
@@ -148,7 +148,10 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
     let mut cur_mod_line = None;
     for line in item_text.lines() {
         if let Some(mod_line) = cur_mod_line {
-            let parsed = regex.captures(mod_line).unwrap();
+            let Some(parsed) = regex.captures(mod_line) else {
+                cur_mod_line = None;
+                continue;
+            };
             let is_prefix = &parsed[1] == "Prefix";
             let notable_name = &parsed[2];
             let tier = parsed[3].parse::<i32>().unwrap();
@@ -218,7 +221,7 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
     let suffixes = modlines.iter().filter(|m| !m.is_prefix);
     let prefixes_tiers = prefixes.clone().map(|m| m.tier).collect::<Vec<_>>();
     let suffixes_tiers = suffixes.clone().map(|m| m.tier).collect::<Vec<_>>();
-    println!("Got {} mods. Tiers: {} / {}", modlines.len(), format!("{:?}", prefixes_tiers), format!("{:?}", suffixes_tiers));
+    println!("Got {} mods. Tiers: {:?} / {:?}", modlines.len(), prefixes_tiers, suffixes_tiers);
     println!("Prefixes: {}", prefixes.clone().map(|m| m.notable_name.clone()).collect::<Vec<_>>().join(", "));
     println!("Suffixes: {}", suffixes.clone().map(|m| m.notable_name.clone()).collect::<Vec<_>>().join(", "));
 
@@ -235,7 +238,112 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
     }
 }
 
-#[test]
-fn test_auto_roll() {
-    auto_roll("test.json", 1);
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn trim_lines_start_end(item_text: &str) -> String {
+        item_text
+            .lines()
+            .map(|l| l.trim())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn test_auto_roll() {
+        auto_roll("test.json", 1);
+    }
+
+    #[test]
+    fn test_item_fractured() {
+        let item_text = r#"
+            Item Class: Gloves
+            Rarity: Magic
+            Phantom Mitts of Puhuarte
+            --------
+            Quality: +20% (augmented)
+            Evasion Rating: 275 (augmented)
+            Energy Shield: 55 (augmented)
+            --------
+            Requirements:
+            Level: 84
+            Dex: 80
+            Int: 80
+            --------
+            Sockets: B-G G-G 
+            --------
+            Item Level: 86
+            --------
+            { Searing Exarch Implicit Modifier (Lesser) — Damage, Chaos }
+            +7(5-7)% to Chaos Damage over Time Multiplier
+            --------
+            { Fractured Suffix Modifier "of Puhuarte" — Damage, Elemental, Cold, Resistance }
+            +47(46-4￼% to Cold Resistance
+            49(30-50)% increased Damage with Hits against Chilled Enemies
+            { Prefix Modifier "Acute" (Tier: 6) — Damage }
+            5(5-10)% increased Damage with Bow Skills
+            Searing Exarch Item
+            --------
+            Fractured Item
+        "#;
+
+        let item_text = trim_lines_start_end(item_text);
+
+        let config = AutoRollConfig {
+            item_name: "Phantom Mitts".to_string(),
+            mods: vec![
+                AutoRollMod {
+                    name: "of Puhuarte".to_string(),
+                    is_prefix: false,
+                },
+            ],
+            auto_aug_regal: false,
+            any_two_t1: false,
+            needs_prefix_and_suffix: false,
+        };
+
+        let res = check_roll(&item_text, &config);
+        // Ignore frac mod
+        assert!(!res.has_suffix);
+        assert!(!res.has_mod);
+        assert!(res.has_prefix);
+    }
+
+    #[test]
+    fn normal_item() {
+        let item_text = r#"
+            Item Class: Quivers
+            Rarity: Magic
+            Acute Feathered Arrow Quiver of Ire
+            --------
+            Requirements:
+            Level: 20
+            --------
+            Item Level: 86
+            --------
+            { Implicit Modifier — Speed }
+            25(20-30)% increased Projectile Speed
+            --------
+            { Prefix Modifier "Acute" (Tier: 6) — Damage }
+            5(5-10)% increased Damage with Bow Skills
+            { Suffix Modifier "of Ire" (Tier: 6) — Damage, Attack, Critical }
+            +10(8-12)% to Critical Strike Multiplier with Bows
+        "#;
+
+        let item_text = trim_lines_start_end(item_text);
+
+        let config = AutoRollConfig {
+            item_name: "Feathered Arrow Quiver".to_string(),
+            mods: vec![
+            ],
+            auto_aug_regal: false,
+            any_two_t1: false,
+            needs_prefix_and_suffix: false,
+        };
+
+        let res = check_roll(&item_text, &config);
+        assert!(res.has_suffix);
+        assert!(res.has_prefix);
+    }
 }
