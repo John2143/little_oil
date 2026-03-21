@@ -36,11 +36,93 @@ pub struct RollResult {
     has_mod: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Currency {
+    Alt,
+    Aug,
+    Chance,
+    Scour,
+    Regal,
+    Alch,
+    Chaos,
+    Transmute,
+    Binding,
+    Exalt,
+    Annul,
+    Cromatic,
+}
+
+impl Currency {
+    fn click_coords(&self) -> (i32, i32) {
+        match self {
+            Currency::Alt => (155, 354),
+            Currency::Aug => (300, 422),
+            Currency::Chance => (297, 363),
+            Currency::Scour => (580, 530),
+            Currency::Regal => (572, 354),
+            Currency::Alch => (655, 360),
+            Currency::Chaos => (725, 360),
+            Currency::Transmute => (71, 360),
+            Currency::Binding => (216, 608),
+            Currency::Exalt => (400, 360),
+            Currency::Annul => (230, 360),
+            Currency::Cromatic => (295, 532),
+        }
+    }
+
+    /// The third line of the currency tooltip should contain this name
+    fn get_name(&self) -> &'static str {
+        match self {
+            Currency::Alt => "Orb of Alteration",
+            Currency::Aug => "Orb of Augmentation",
+            Currency::Chance => "Orb of Chance",
+            Currency::Scour => "Orb of Scouring",
+            Currency::Regal => "Regal Orb",
+            Currency::Alch => "Orb of Alchemy",
+            Currency::Chaos => "Chaos Orb",
+            Currency::Transmute => "Orb of Transmutation",
+            Currency::Binding => "Orb of Binding",
+            Currency::Exalt => "Exalted Orb",
+            Currency::Annul => "Orb of Annulment",
+            Currency::Cromatic => "Chromatic Orb",
+        }
+    }
+}
+
+#[test]
+fn test_currency_coords() {
+    super::move_mouse(1, 1);
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    for currency in [
+        Currency::Alt,
+        Currency::Aug,
+        Currency::Chance,
+        Currency::Scour,
+        Currency::Regal,
+        Currency::Alch,
+        Currency::Chaos,
+        Currency::Transmute,
+        Currency::Binding,
+        Currency::Exalt,
+        Currency::Annul,
+        Currency::Cromatic,
+    ] {
+        let coords = currency.click_coords();
+        let (x, y) = coords;
+        println!("{:?} coords: {:?}", currency, coords);
+        super::move_mouse(x, y);
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let item = read_item_on_cursor();
+        let third_line = item.lines().nth(2).unwrap_or("");
+        assert_eq!(third_line, currency.get_name());
+    }
+}
+
 pub fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
     #![allow(unused_variables)]
-    let alt = (155, 354);
-    let aug = (300, 422);
-    let reg = (572, 354);
+    let alt = Currency::Alt.click_coords();
+    let aug = Currency::Aug.click_coords();
+    let reg = Currency::Regal.click_coords();
     let slot = (444, 628);
 
     let config: AutoRollConfig = {
@@ -122,37 +204,80 @@ pub fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
     Some(res)
 }
 
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ModType {
+    Prefix,
+    Suffix,
+    Implicit,
+    Other,
+}
+
 #[derive(Debug)]
 #[allow(unused)]
 pub struct ParsedMod {
-    pub is_prefix: bool,
+    pub mod_type: ModType,
+    pub is_fractured: bool,
     pub notable_name: String,
     pub tier: i32,
     pub tags: Vec<String>,
     pub full_text: String,
 }
 
+impl ParsedMod {
+    fn is_prefix(&self) -> bool {
+        self.mod_type == ModType::Prefix
+    }
+
+    fn is_suffix(&self) -> bool {
+        self.mod_type == ModType::Suffix
+    }
+}
+
+//impl ModFilter
+
 fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
     //println!("checking roll: {}", item_text);
     //println!("looking for: {}", config.item_name);
-
 
     //dbg!(&item_text.lines().collect::<Vec<_>>()[8..]);
 
     // { Prefix Modifier \"Notable\" (Tier: 1) — Caster, Speed }
     // or
     // { Suffix Modifier \"Notable\" (Tier: 1) }
-    let regex = regex::Regex::new(r#"\{ (Prefix|Suffix) Modifier \"([^\"]*)\" \(Tier: (\d+)\) —? ?([^\}]*)\)?"#).unwrap();
+    let regex = regex::Regex::new(
+        r#"\{ ([\w ]+) Modifier \"([^\"]*)\" \(Tier: (\d+)\) —? ?([^\}]*)\)?"#,
+    )
+    .unwrap();
 
     let mut modlines = vec![];
     let mut cur_mod_line = None;
+    let mut mod_text = String::new();
     for line in item_text.lines() {
-        if let Some(mod_line) = cur_mod_line {
-            let Some(parsed) = regex.captures(mod_line) else {
-                cur_mod_line = None;
+        if let Some(top_mod_line) = cur_mod_line {
+            if !line.starts_with("------") && !line.starts_with("{") && !line.ends_with("}") {
+                mod_text += line;
+                mod_text += "\n";
+                continue;
+            }
+            cur_mod_line = None;
+
+            let Some(parsed) = regex.captures(top_mod_line) else {
+                tracing::warn!("Invalid mod line: {top_mod_line}");
                 continue;
             };
-            let is_prefix = &parsed[1] == "Prefix";
+
+            let p = &parsed[1];
+            let mut mod_type = ModType::Other;
+            if p.contains("Prefix") {
+                mod_type = ModType::Prefix;
+            } else if p.contains("Suffix") {
+                mod_type = ModType::Suffix;
+            } else if p.contains("Implicit") {
+                mod_type = ModType::Implicit;
+            }
+            let is_fractured = p.contains("Fractured");
+
             let notable_name = &parsed[2];
             let tier = parsed[3].parse::<i32>().unwrap();
             let tags = parsed
@@ -163,16 +288,17 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
                 .collect::<Vec<_>>();
 
             modlines.push(ParsedMod {
-                is_prefix,
+                is_fractured,
+                mod_type,
                 notable_name: notable_name.to_string(),
                 tier,
                 tags,
                 full_text: line.to_string(),
             });
-
-            cur_mod_line = None;
         }
-        if line.starts_with("{") && line.ends_with("}") && !line.starts_with("{ Implicit Modifier") {
+
+        if line.starts_with("{") && line.ends_with("}")
+        {
             cur_mod_line = Some(line);
         }
     }
@@ -182,9 +308,9 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
     let mut has_mod_prefix = false; //has a matching prefix
     let mut has_mod_suffix = false; //has a matching suffix
     for modline in &modlines {
-        if modline.is_prefix {
+        if modline.mod_type == ModType::Prefix {
             has_prefix = true;
-        } else {
+        } if modline.mod_type == ModType::Suffix {
             has_suffix = true;
         }
 
@@ -194,7 +320,11 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
                 println!("found notable name match: {}", mod_config.name);
                 got_match = true;
             }
-            if modline.full_text.to_lowercase().contains(&mod_config.name.to_lowercase()) {
+            if modline
+                .full_text
+                .to_lowercase()
+                .contains(&mod_config.name.to_lowercase())
+            {
                 println!("found full text match: {}", mod_config.name);
                 got_match = true;
             }
@@ -217,13 +347,32 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
         has_mod = has_mod_prefix && has_mod_suffix;
     }
 
-    let prefixes = modlines.iter().filter(|m| m.is_prefix);
-    let suffixes = modlines.iter().filter(|m| !m.is_prefix);
+    let prefixes = modlines.iter().filter(|m| m.is_prefix());
+    let suffixes = modlines.iter().filter(|m| m.is_suffix());
     let prefixes_tiers = prefixes.clone().map(|m| m.tier).collect::<Vec<_>>();
     let suffixes_tiers = suffixes.clone().map(|m| m.tier).collect::<Vec<_>>();
-    println!("Got {} mods. Tiers: {:?} / {:?}", modlines.len(), prefixes_tiers, suffixes_tiers);
-    println!("Prefixes: {}", prefixes.clone().map(|m| m.notable_name.clone()).collect::<Vec<_>>().join(", "));
-    println!("Suffixes: {}", suffixes.clone().map(|m| m.notable_name.clone()).collect::<Vec<_>>().join(", "));
+    println!(
+        "Got {} mods. Tiers: {:?} / {:?}",
+        modlines.len(),
+        prefixes_tiers,
+        suffixes_tiers
+    );
+    println!(
+        "Prefixes: {}",
+        prefixes
+            .clone()
+            .map(|m| m.notable_name.clone())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    println!(
+        "Suffixes: {}",
+        suffixes
+            .clone()
+            .map(|m| m.notable_name.clone())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     //println!("any two t1: {}, any t1: {}", config.any_two_t1, modlines.iter().any(|m| m.tier == 1));
     if modlines.iter().all(|m| m.tier == 1) && modlines.len() == 2 && config.any_two_t1 {
@@ -292,12 +441,10 @@ mod test {
 
         let config = AutoRollConfig {
             item_name: "Phantom Mitts".to_string(),
-            mods: vec![
-                AutoRollMod {
-                    name: "of Puhuarte".to_string(),
-                    is_prefix: false,
-                },
-            ],
+            mods: vec![AutoRollMod {
+                name: "of Puhuarte".to_string(),
+                is_prefix: false,
+            }],
             auto_aug_regal: false,
             any_two_t1: false,
             needs_prefix_and_suffix: false,
@@ -335,8 +482,7 @@ mod test {
 
         let config = AutoRollConfig {
             item_name: "Feathered Arrow Quiver".to_string(),
-            mods: vec![
-            ],
+            mods: vec![],
             auto_aug_regal: false,
             any_two_t1: false,
             needs_prefix_and_suffix: false,
