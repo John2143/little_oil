@@ -187,7 +187,7 @@ impl ChaosRecipe {
     }
 
     #[allow(unused)]
-    fn get_json(&self) -> StashAPIResult {
+    fn get_json(&self) -> anyhow::Result<StashAPIResult> {
         let d = ureq::get(&self.get_url())
             .header("Accept", "application/json")
             .header("Cookie", &format!("POESESSID={}", self.session_id))
@@ -209,17 +209,17 @@ impl ChaosRecipe {
                     .chaos_recipe_settings
                     .as_mut()
                     .map(|s| s.tab_index = Some(tab.i));
-                crate::save_config(crate::CONFIG_PATH, &*settings).unwrap();
+                crate::save_config(&crate::config_path(), &*settings)?;
                 println!("writing config {:?}", settings);
 
                 let mut newc = self.clone();
                 newc.tab_index = Some(tab.i);
                 //TODO safety
-                return newc.get_json();
+                return Ok(newc.get_json()?);
             }
         }
 
-        apir
+        Ok(apir)
     }
 }
 
@@ -418,12 +418,12 @@ impl ItemList<'_> {
 use ureq;
 
 pub fn get_tally(cr_config: &ChaosRecipe) {
-    let apir = cr_config.get_json();
+    let apir = cr_config.get_json().unwrap();
     println!("Total item counts: {:?}", apir.tally());
 }
 
 pub fn do_recipe(cr_config: &ChaosRecipe, amt: usize) {
-    let mut apir = cr_config.get_json();
+    let mut apir = cr_config.get_json().unwrap();
     for _i in 0..amt {
     #[allow(unused)]
         let item_list = apir.create_item_list();

@@ -44,7 +44,7 @@ pub fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
     let slot = (444, 628);
 
     let config: AutoRollConfig = {
-        match load_config(path, None) {
+        match load_config(std::path::Path::new(path), None) {
             Ok(config) => config,
             Err(msg) => {
                 println!("{}", msg);

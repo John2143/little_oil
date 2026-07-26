@@ -2,8 +2,12 @@
   "item_name": "Conjurer's Vestment",
   "mods": [
     {
-      "name": "explode",
-      "is_prefix": true
+      "name": "(21-30)% chance to explode",
+      "is_prefix": false
+    },
+    {
+      "name": "frenzy",
+      "is_prefix": false
     }
   ],
   "auto_aug_regal": false

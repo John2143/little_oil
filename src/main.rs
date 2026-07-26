@@ -5,6 +5,7 @@ use tracing::{debug, info, trace};
 
 use std::io::{self, BufRead, Cursor};
 use std::process::Command;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -74,16 +75,25 @@ static DEFAULT_SETTINGS: Settings = Settings {
 
 static SETTINGS: Lazy<RwLock<Settings>> = Lazy::new(|| RwLock::new(DEFAULT_SETTINGS.clone()));
 
-static CONFIG_PATH: &str = "/home/john/little_oil/config.json";
 
-pub fn save_config<T: Serialize>(path: &str, set: &T) -> Result<(), std::io::Error> {
+/// Returns the path to the config file: $XDG_CONFIG_HOME/little_oil/config.json
+pub fn config_path() -> PathBuf {
+    dirs::config_dir()
+        .expect("no XDG config directory")
+        .join("little_oil")
+        .join("config.json")
+}
+
+pub fn save_config<T: Serialize>(path: &Path, set: &T) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let mut file = fs::File::create(&path)?;
     file.write_all(serde_json::to_string_pretty(&set).unwrap().as_bytes())?;
-
     Ok(())
 }
 
-fn load_config<T>(path: &str, default: Option<&T>) -> anyhow::Result<T>
+fn load_config<T>(path: &Path, default: Option<&T>) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned + Serialize + Clone,
 {
@@ -130,7 +140,7 @@ fn main() -> anyhow::Result<()> {
     //event_queue.roundtrip(&mut dat);
     //event_queue.blocking_dispatch(&mut dat);
 
-    let set = load_config(CONFIG_PATH, Some(&DEFAULT_SETTINGS))?;
+    let set = load_config(&config_path(), Some(&DEFAULT_SETTINGS))?;
 
     *SETTINGS.write().unwrap() = set;
 
@@ -393,7 +403,7 @@ fn command_line() {
                     Ok(x) => {
                         let mut s = SETTINGS.write().unwrap();
                         s.pull_delay = x;
-                        save_config(CONFIG_PATH, &*s).unwrap();
+                        save_config(&config_path(), &*s).unwrap();
                     }
                     Err(_) => println!("could not delay"),
                 }
@@ -435,7 +445,7 @@ fn command_line() {
                 println!("Making chrome file {}", file);
 
                 save_config(
-                    &file,
+                    std::path::Path::new(file),
                     &AutoRollConfig {
                         auto_aug_regal: false,
                         item_name: "Medium Cluster Jewel".to_string(),
@@ -544,10 +554,10 @@ fn reset_inv_colors() -> anyhow::Result<()> {
 
     let mut settings = SETTINGS.write().unwrap();
 
+    println!("Inventory colors reset ({} slots)", colors.len());
     settings.inv_colors = Some(colors);
-    dbg!("ok");
 
-    save_config(CONFIG_PATH, &*settings)?;
+    save_config(&config_path(), &*settings)?;
     Ok(())
 }
 
