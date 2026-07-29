@@ -1,18 +1,29 @@
 use anyhow::bail;
-use mouse_keyboard_input::{key_codes, Button, VirtualDevice};
+use mouse_keyboard_input::key_codes;
 //use inputbot::KeybdKey;
 use tracing::{debug, info, trace};
+use parking_lot::RwLock;
+use std::sync::LazyLock;
 
-use std::io::{self, BufRead, Cursor};
+use std::fs;
+use std::io::{self, BufRead, Read, Write};
 use std::process::Command;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use device::{click, click_right, ctrl_click, FAKE_DEVICE};
+use crate::auto_roll::AutoRollConfig;
+use crate::auto_roll::AutoRollMod;
+use screenshot::ScreenshotData;
+use platform::Platform;
 
 mod auto_roll;
 mod chaos_recipe;
 mod dicts;
 pub mod item;
+mod device;
+mod screenshot;
+mod platform;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Settings {
@@ -22,15 +33,17 @@ pub struct Settings {
     div_delay: u64,
     inv_colors: Option<Vec<u32>>,
     screen_height: Option<u32>,
-    screenshot_method: ScreenshotMethod,
     pos: InvPositions,
+    pub platform: Option<Platform>,
+    pub inv_region: Option<ScreenRegion>,
+    pub stash_region: Option<ScreenRegion>,
+    pub game_window_region: Option<ScreenRegion>,
 }
 
 impl Settings {
     fn screenshot(&self) -> anyhow::Result<ScreenshotData> {
-        match self.screenshot_method {
-            ScreenshotMethod::Grim => take_screenshot_grim(),
-        }
+        let platform = self.platform.unwrap_or_else(Platform::detect);
+        platform.screenshot(self)
     }
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -45,14 +58,15 @@ struct InvPositions {
     inv: (u32, u32),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum ScreenshotMethod {
-    /// Wayland users should use an external program like "grim"
-    Grim,
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub struct ScreenRegion {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
-use std::fs;
-use std::io::{Read, Write};
+
 
 static DEFAULT_SETTINGS: Settings = Settings {
     chaos_recipe_settings: None,
@@ -61,7 +75,6 @@ static DEFAULT_SETTINGS: Settings = Settings {
     div_delay: 100,
     inv_colors: None,
     screen_height: Some(1440),
-    screenshot_method: ScreenshotMethod::Grim,
     pos: InvPositions {
         alt: (149, 368),
         aug: (303, 444),
@@ -70,10 +83,14 @@ static DEFAULT_SETTINGS: Settings = Settings {
         annul: (226, 372),
         transmute: (71, 368),
         inv: (1713, 828),
-    }
+    },
+    platform: None,
+    inv_region: None,
+    stash_region: None,
+    game_window_region: None,
 };
 
-static SETTINGS: Lazy<RwLock<Settings>> = Lazy::new(|| RwLock::new(DEFAULT_SETTINGS.clone()));
+static SETTINGS: LazyLock<RwLock<Settings>> = LazyLock::new(|| RwLock::new(DEFAULT_SETTINGS.clone()));
 
 
 /// Returns the path to the config file: $XDG_CONFIG_HOME/little_oil/config.json
@@ -126,7 +143,7 @@ fn main() -> anyhow::Result<()> {
     tracing::info!("Starting main loop");
 
     // plug in our fake input device
-    let _ = FAKE_DEVICE.lock().unwrap().synchronize();
+    let _ = FAKE_DEVICE.lock().synchronize();
 
     // init wayland
     //let conn = Connection::connect_to_env().expect("Wayland not initialized");
@@ -142,9 +159,18 @@ fn main() -> anyhow::Result<()> {
 
     let set = load_config(&config_path(), Some(&DEFAULT_SETTINGS))?;
 
-    *SETTINGS.write().unwrap() = set;
+    *SETTINGS.write() = set;
 
-    //println!("got config: {:?}", SETTINGS.read().unwrap());
+    // Ensure platform is set (auto-detect on first run, or use config value)
+    {
+        let mut settings = SETTINGS.write();
+        if settings.platform.is_none() {
+            settings.platform = Some(Platform::detect());
+            save_config(&config_path(), &*settings)?;
+        }
+    }
+
+    //println!("got config: {:?}", SETTINGS.read());
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     match args.get(0).map(|x| &**x) {
@@ -152,6 +178,10 @@ fn main() -> anyhow::Result<()> {
             let s = serde_json::to_string(&DEFAULT_SETTINGS).unwrap();
             println!("{}", s);
             return Ok(())
+        }
+        Some("version") | Some("--version") => {
+            println!("little_oil v{}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
         }
         Some("sort") => {
             dbg!(&args);
@@ -164,7 +194,7 @@ fn main() -> anyhow::Result<()> {
             return sort_quad(times);
         }
         Some("empty") => {
-            return empty_inv(&SETTINGS.read().unwrap());
+            return empty_inv(&SETTINGS.read());
         }
         Some("roll") => {
             let file = args.get(1).expect("missing name to roll");
@@ -180,11 +210,47 @@ fn main() -> anyhow::Result<()> {
         Some("reset_inv") => {
             return reset_inv_colors();
         }
+        Some("set-region") => {
+            let region_name = args.get(1).map(|x| &**x).unwrap_or("help");
+            let settings = SETTINGS.read();
+            let platform = settings.platform.unwrap_or_else(Platform::detect);
+            drop(settings);
+
+            let region = match region_name {
+                "inventory" => {
+                    let r = platform.select_region("Select the INVENTORY grid region (top-left slot to bottom-right slot)")?;
+                    SETTINGS.write().inv_region = Some(r);
+                    r
+                }
+                "stash" => {
+                    let r = platform.select_region("Select the STASH grid region (top-left slot to bottom-right slot)")?;
+                    SETTINGS.write().stash_region = Some(r);
+                    r
+                }
+                "window" => {
+                    let r = platform.select_region("Select the GAME WINDOW (drag around the entire PoE window)")?;
+                    SETTINGS.write().game_window_region = Some(r);
+                    r
+                }
+                _ => {
+                    eprintln!("Usage: little_oil set-region <inventory|stash|window>");
+                    return Ok(());
+                }
+            };
+
+            save_config(&config_path(), &*SETTINGS.read())?;
+            #[cfg(target_os = "linux")]
+            let _ = Command::new("notify-send")
+                .args(["-u", "low", "Little Oil", &format!("{region_name} region saved: {}x{} at ({}, {})", region.width, region.height, region.x, region.y)])
+                .spawn();
+
+            return Ok(());
+        }
         Some("chance") => {
             return chance();
         }
         Some("tally") => {
-            let settings = SETTINGS.read().unwrap();
+            let settings = SETTINGS.read();
             let c = match settings.chaos_recipe_settings.clone() {
                 Some(s) => s,
                 None => bail!("No chaos recipe config found"),
@@ -202,7 +268,7 @@ fn main() -> anyhow::Result<()> {
                 .parse()
                 .expect("Invalid number of recipes, try 1 or 2");
 
-            let settings = SETTINGS.read().unwrap();
+            let settings = SETTINGS.read();
             let c = match settings.chaos_recipe_settings.clone() {
                 Some(s) => s,
                 None => {
@@ -301,7 +367,7 @@ fn read_item_on_cursor() -> String {
     let mut i = 0;
     loop {
         {
-            let mut device = FAKE_DEVICE.lock().unwrap();
+            let mut device = FAKE_DEVICE.lock();
             // press ctrl alt c
             device.press(key_codes::KEY_LEFTCTRL).unwrap();
             device.press(key_codes::KEY_LEFTALT).unwrap();
@@ -379,6 +445,8 @@ fn chance() -> anyhow::Result<()> {
 
 static HELP: &str = r#"
 help: Show this menu
+version: Print version and exit
+set-region <inventory|stash|window>: Select and save a screen region
 pull <delay>: Change delay for pulling out of quad tab
 push <delay>: Change delay for pushing into tab/trade
 div <delay>: Change delay for div macro
@@ -401,7 +469,7 @@ fn command_line() {
                 println!("pull delay is {}", rest);
                 match rest.parse() {
                     Ok(x) => {
-                        let mut s = SETTINGS.write().unwrap();
+                        let mut s = SETTINGS.write();
                         s.pull_delay = x;
                         save_config(&config_path(), &*s).unwrap();
                     }
@@ -412,7 +480,7 @@ fn command_line() {
                 println!("push delay is {}", rest);
                 match rest.parse() {
                     Ok(x) => {
-                        let mut s = SETTINGS.write().unwrap();
+                        let mut s = SETTINGS.write();
                         s.push_delay = x;
                         //save_config(CONFIG_PATH, &s).unwrap();
                     }
@@ -423,7 +491,7 @@ fn command_line() {
                 println!("div delay is {}", rest);
                 match rest.parse() {
                     Ok(x) => {
-                        let mut s = SETTINGS.write().unwrap();
+                        let mut s = SETTINGS.write();
                         s.div_delay = x;
                         //save_config(CONFIG_PATH, &s).unwrap();
                     }
@@ -477,67 +545,20 @@ fn command_line() {
     }
 }
 
-//thread_local!(static MOUSE: Lazy<mouse_rs::Mouse> = Lazy::new(|| mouse_rs::Mouse::new()));
-
-static FAKE_DEVICE: Lazy<Mutex<VirtualDevice>> =
-    Lazy::new(|| Mutex::new(VirtualDevice::default().unwrap()));
-
-fn click(x: i32, y: i32) {
-    move_mouse(x, y);
-    std::thread::sleep(std::time::Duration::from_millis(30));
-    click_release(key_codes::BTN_LEFT);
-}
-
-fn click_right(x: i32, y: i32) {
-    move_mouse(x, y);
-    std::thread::sleep(std::time::Duration::from_millis(30));
-    click_release(key_codes::BTN_RIGHT);
-}
-
-fn click_release(m: Button) {
-    trace!(?m, "click_release");
-    let mut device = FAKE_DEVICE.lock().unwrap();
-
-    device.click(m).unwrap();
-    //device.synchronize().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(10));
-}
-
-fn move_mouse(x: i32, y: i32) {
-    trace!(x, y, "mouse_move");
-    let mut device = FAKE_DEVICE.lock().unwrap();
-    device.move_mouse(-5000, -5000).unwrap();
-    device.move_mouse((x as f32 * 1.25) as _, (y as f32 * 1.25) as _).unwrap();
-    //device.synchronize().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(10));
-}
-
-use once_cell::sync::Lazy;
-use std::sync::{Mutex, RwLock};
-
-use crate::auto_roll::AutoRollConfig;
-use crate::auto_roll::AutoRollMod;
 
 fn reset_inv_colors() -> anyhow::Result<()> {
-    let settings = SETTINGS.read().unwrap();
-    let height = settings.screen_height.unwrap_or(1080);
-
-    let inv_loc = settings.pos.inv;
-
-    let inv_delta = if height == 1080 {
-        53
-    } else if height == 1440 {
-        70
-    } else if height == 1000 {
-        54
-    } else {
-        panic!("invalid screen size");
-    };
-
-    //click(618, 618);
+    let settings = SETTINGS.read();
+    let inv_region = settings
+        .inv_region
+        .expect("Inventory region not calibrated — run: little_oil set-region inventory");
+    let inv_delta = inv_region.width / 12;
+    let inv_loc = (inv_region.x, inv_region.y);
 
     let frame = settings.screenshot()?;
     drop(settings);
+
+    //click(618, 618);
+
 
     let mut colors = Vec::with_capacity(60);
     colors.resize(60, 0);
@@ -552,30 +573,28 @@ fn reset_inv_colors() -> anyhow::Result<()> {
         }
     }
 
-    let mut settings = SETTINGS.write().unwrap();
+    let mut settings = SETTINGS.write();
 
-    println!("Inventory colors reset ({} slots)", colors.len());
+    let note = Command::new("notify-send")
+        .args(["-u", "low", "Little Oil", &format!("Inventory colors calibrated: {} slots", colors.len())])
+        .spawn();
+    if let Err(e) = note {
+        eprintln!("notify-send failed: {e}");
+    }
     settings.inv_colors = Some(colors);
 
     save_config(&config_path(), &*settings)?;
     Ok(())
 }
 
-fn empty_inv_macro(settings: &Settings, start_slot: u32, delay: u64) -> anyhow::Result<()> {
-    let height = settings.screen_height.unwrap_or(1080);
+fn empty_inv_macro(settings: &Settings, start_slot: u32, delay: u64) -> anyhow::Result<u32> {
+    let inv_region = settings
+        .inv_region
+        .expect("Inventory region not calibrated — run: little_oil set-region inventory");
+    let inv_delta = inv_region.width / 12;
+    let inv_loc = (inv_region.x, inv_region.y);
 
-    let inv_loc = settings.pos.inv;
-    let inv_delta = if height == 1080 {
-        53
-    } else if height == 1440 {
-        70
-    } else if height == 1000 {
-        54
-    } else {
-        panic!("invalid screen size");
-    };
-
-    info!(height, x = inv_loc.0, y = inv_loc.1, inv_delta, "Emptying inv");
+    info!(inv_delta, x = inv_loc.0, y = inv_loc.1, "Emptying inv");
 
     let frame = settings.screenshot()?;
 
@@ -587,6 +606,7 @@ fn empty_inv_macro(settings: &Settings, start_slot: u32, delay: u64) -> anyhow::
     };
 
     let inv_color = settings.inv_colors.as_ref().unwrap_or(&default_colors);
+    let mut clicked: u32 = 0;
 
     for x in (start_slot / 5)..12 {
         for y in (start_slot % 5)..5 {
@@ -605,167 +625,71 @@ fn empty_inv_macro(settings: &Settings, start_slot: u32, delay: u64) -> anyhow::
 
                 debug!(x, y, "clicking inv");
 
-                click(rx, ry);
+                ctrl_click(rx, ry);
+                clicked += 1;
                 std::thread::sleep(std::time::Duration::from_millis(delay));
             }
         }
         //return Ok(());
     }
 
-    Ok(())
+    Ok(clicked)
     //move_mouse(655, 801);
 }
 
 fn empty_inv(settings: &Settings) -> anyhow::Result<()> {
-    println!("empty inv (delay {})", settings.push_delay);
-    //let slot = if KeybdKey::NumLockKey.is_toggled() { 5 } else { 0 };
     let slot = 0;
-
     std::thread::sleep(std::time::Duration::from_millis(500));
-    return empty_inv_macro(&settings, slot, settings.push_delay);
-    //empty_inv_macro(slot, delay);
-}
-
-pub struct ScreenshotData {
-    height: usize,
-    width: usize,
-    pixels: Vec<u8>,
-}
-
-pub fn take_screenshot_grim() -> anyhow::Result<ScreenshotData> {
-    let cmd = Command::new("grim")
-        // whole left screen
-        .arg("-g")
-        .arg("0,0 2560x1440")
-        // png out
-        .arg("-t")
-        .arg("ppm")
-        .arg("-")
-        .output()
-        .unwrap();
-
-    // for .seek()
-    let stdout = Cursor::new(cmd.stdout);
-    // the output format ppm "portable pixel map" from grim is called
-    // pnm "portable any map" in the image crate.
-    let img = image::load(stdout, image::ImageFormat::Pnm).unwrap();
-
-    //let path = Path::new("./last_screnshot.png");
-    //info!(path = ?path.canonicalize().unwrap(), "saving screenshot");
-    //img.save(path).unwrap();
-
-    Ok(ScreenshotData {
-        height: img.height() as usize,
-        width: img.width() as usize,
-        pixels: img.to_rgba8().to_vec(),
-    })
-}
-
-//pub fn take_screenshot_scrap() -> anyhow::Result<ScreenshotData> {
-    //println!("taking screenshot...");
-    //let disp = scrap::Display::primary().unwrap();
-    ////let disps = scrap::Display::all().unwrap();
-    //let mut cap = scrap::Capturer::new(disp).unwrap();
-    ////for disp in disps.into_iter().skip(2) {
-    ////cap = scrap::Capturer::new(disp).unwrap();
-    ////println!("doing cap");
-    ////break;
-    ////}
-
-    //let width = cap.width();
-    //let height = cap.height();
-
-    //let sleep = 50;
-
-    ////max 2 seconds before fail
-    //let maxloops = 2000 / sleep;
-
-    //println!("trying to screenshot...");
-
-    //for _ in 0..maxloops {
-        //match cap.frame() {
-            //Ok(fr) => {
-                //println!("got screenshot");
-                //return Ok(ScreenshotData {
-                    //height,
-                    //width,
-                    //pixels: fr.to_vec(),
-                //});
-            //}
-            //Err(e) => {
-                //println!("screenshot failed... {}", e);
-            //}
-        //}
-        //std::thread::sleep(std::time::Duration::from_millis(sleep));
-    //}
-
-    //bail!("was not able to take screenshot after {maxloops} tries");
-//}
-
-impl ScreenshotData {
-    //return RGBA8888 pixel as u32
-    fn get_pixel(&self, x: usize, y: usize) -> u32 {
-        assert!(x < self.width);
-        assert!(y < self.height);
-
-        let pos: usize = y * self.width + x;
-        let pos = pos * 4; //pixel format ARGB8888;
-
-        u32::from_ne_bytes([
-            self.pixels[pos + 3],
-            self.pixels[pos + 2],
-            self.pixels[pos + 1],
-            self.pixels[pos],
-        ])
+    let clicked = empty_inv_macro(&settings, slot, settings.push_delay)?;
+    let note = Command::new("notify-send")
+        .args(["-u", "low", "Little Oil", &format!("Inventory cleared: {} items moved", clicked)])
+        .spawn();
+    if let Err(e) = note {
+        eprintln!("notify-send failed: {e}");
     }
+    Ok(())
 }
+
 
 fn sort_quad(times: u32) -> anyhow::Result<()> {
     std::thread::sleep(std::time::Duration::from_millis(300));
 
-    let settings = SETTINGS.read().unwrap();
-    let (delay, height) = { (settings.pull_delay, settings.screen_height.unwrap_or(1080)) };
+    let settings = SETTINGS.read();
+    let delay = settings.pull_delay;
 
+    let game_window = settings.game_window_region.clone();
+    let screen_height = settings.screen_height;
     let frame = settings.screenshot()?;
-
     drop(settings);
 
+    let (left_edge, px, pys) = if let Some(win) = &game_window {
+        // Grid is 24x24 in the quad tab. Derive from window dimensions.
+        let margin = win.width / 72;
+        let cell_w = (win.width - margin * 2) / 24;
+        let cell_h = (win.height as f64 * 0.75) as u32 / 24;
+        let py_base = (win.y + win.height / 4) as usize;
+
+        let mut pys_arr = [0usize; 24];
+        for (i, entry) in pys_arr.iter_mut().enumerate() {
+            *entry = py_base + i * cell_h as usize;
+        }
+        (margin as usize, cell_w as usize, pys_arr)
+    } else {
+        // FALLBACK: existing hardcoded math (keeps working without calibration)
+        let height = screen_height.unwrap_or(1080);
+        let left_edge_v = if height == 1080 { 21usize } else if height == 1440 { 29 } else { panic!("invalid screen size") };
+        let px_v = if height == 1080 { ((2573 - 1920 - 15) / 24) as usize } else if height == 1440 { (830 - 795) as usize } else { panic!("invalid screen size") };
+        let pys_v = if height == 1080 {
+            [160usize, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581, 607, 634, 660, 686, 712, 739, 765]
+        } else if height == 1440 {
+            [260, 295, 330, 365, 400, 436, 471, 506, 541, 576, 611, 646, 681, 716, 751, 787, 822, 857, 892, 927, 962, 997, 1032, 1067]
+        } else {
+            panic!("invalid screen size");
+        };
+        (left_edge_v, px_v, pys_v)
+    };
+
     println!("take tab (delay {})", delay);
-
-    //let px: f64 = (625f64 - 17f64) / 23f64;
-    //let pys = [
-    //160, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581, 607,
-    //634, 660, 686, 712, 739, 765, //792,
-    //];
-    let left_edge = if height == 1080 {
-        21
-    } else if height == 1440 {
-        29
-    } else {
-        panic!("invalid screen size");
-    };
-
-    let px = if height == 1080 {
-        (2573 - 1920 - 15) / 24
-    } else if height == 1440 {
-        830 - 795
-    } else {
-        panic!("invalid screen size");
-    };
-
-    let pys = if height == 1080 {
-        [
-            160, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581,
-            607, 634, 660, 686, 712, 739, 765, //792,
-        ]
-    } else if height == 1440 {
-        [
-            260, 295, 330, 365, 400, 436, 471, 506, 541, 576, 611, 646, 681, 716, 751, 787, 822,
-            857, 892, 927, 962, 997, 1032, 1067,
-        ]
-    } else {
-        panic!("invalid screen size");
-    };
 
     //160, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581, 607,
     //634, 660, 686, 712, 739, 765, //792,

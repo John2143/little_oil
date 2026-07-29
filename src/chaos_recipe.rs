@@ -204,7 +204,7 @@ impl ChaosRecipe {
                 println!("Config file name is {}", self.tab_name);
             } else if tab.n == self.tab_name {
                 println!("closest ID is {}, {}", tab.n, tab.i);
-                let mut settings = crate::SETTINGS.write().unwrap();
+                let mut settings = crate::SETTINGS.write();
                 settings
                     .chaos_recipe_settings
                     .as_mut()
@@ -342,7 +342,7 @@ impl StashAPIResult {
 impl ItemList<'_> {
     fn take(&self) {
         let (delay, height) = {
-            let settings = crate::SETTINGS.read().unwrap();
+            let settings = crate::SETTINGS.read();
             (settings.pull_delay, settings.screen_height.unwrap_or(1080))
         };
 
