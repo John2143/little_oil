@@ -1,4 +1,4 @@
-mod wayland;
+pub(crate) mod wayland;
 mod x11;
 mod windows;
 
@@ -9,7 +9,7 @@ use crate::ScreenRegion;
 use crate::Settings;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
     #[serde(rename = "wayland")]
     Wayland,

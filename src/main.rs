@@ -1,7 +1,6 @@
 use anyhow::bail;
 use mouse_keyboard_input::key_codes;
-//use inputbot::KeybdKey;
-use tracing::{debug, info, trace};
+use tracing::{debug, info};
 use parking_lot::RwLock;
 use std::sync::LazyLock;
 
@@ -11,10 +10,10 @@ use std::process::Command;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use device::{click, click_right, ctrl_click, FAKE_DEVICE};
+use device::{click, click_right, ctrl_click, move_mouse, FAKE_DEVICE};
 use crate::auto_roll::AutoRollConfig;
 use crate::auto_roll::AutoRollMod;
-use screenshot::ScreenshotData;
+use screenshot::{Rect, ScreenshotData};
 use platform::Platform;
 
 mod auto_roll;
@@ -24,20 +23,38 @@ pub mod item;
 mod device;
 mod screenshot;
 mod platform;
+mod stash_grid;
+
+use stash_grid::{QUAD_COLS, QUAD_ROWS, StashGrid};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Settings {
     chaos_recipe_settings: Option<chaos_recipe::ChaosRecipe>,
+    #[serde(default = "default_pull_delay")]
     pull_delay: u64,
+    #[serde(default = "default_push_delay")]
     push_delay: u64,
+    #[serde(default = "default_div_delay")]
     div_delay: u64,
-    inv_colors: Option<Vec<u32>>,
-    screen_height: Option<u32>,
-    pos: InvPositions,
+    /// Three probe colors per inventory slot, 60 slots, column-major
+    /// (index = col * 5 + row) to match the existing loop order.
+    #[serde(default)]
+    inv_samples: Option<Vec<[u32; 3]>>,
+    #[serde(default)]
     pub platform: Option<Platform>,
+    #[serde(default)]
     pub inv_region: Option<ScreenRegion>,
+    #[serde(default)]
     pub stash_region: Option<ScreenRegion>,
+    #[serde(default)]
     pub game_window_region: Option<ScreenRegion>,
+    /// Relative device units emitted per screen pixel of pointer motion.
+    /// Depends on pointer DPI, compositor sensitivity, and accel profile, so it
+    /// is machine-specific. Measure with: little_oil calibrate-pointer
+    #[serde(default)]
+    pub pointer_scale: Option<f32>,
+    #[serde(default)]
+    pub stash_grid: Option<stash_grid::StashGrid>,
 }
 
 impl Settings {
@@ -45,17 +62,6 @@ impl Settings {
         let platform = self.platform.unwrap_or_else(Platform::detect);
         platform.screenshot(self)
     }
-}
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct InvPositions {
-    alt: (u32, u32),
-    aug: (u32, u32),
-    scour: (u32, u32),
-    regal: (u32, u32),
-    annul: (u32, u32),
-    transmute: (u32, u32),
-
-    inv: (u32, u32),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -66,6 +72,10 @@ pub struct ScreenRegion {
     pub height: u32,
 }
 
+const fn default_pull_delay() -> u64 { 50 }
+const fn default_push_delay() -> u64 { 40 }
+const fn default_div_delay() -> u64 { 100 }
+
 
 
 static DEFAULT_SETTINGS: Settings = Settings {
@@ -73,21 +83,13 @@ static DEFAULT_SETTINGS: Settings = Settings {
     pull_delay: 50,
     push_delay: 40,
     div_delay: 100,
-    inv_colors: None,
-    screen_height: Some(1440),
-    pos: InvPositions {
-        alt: (149, 368),
-        aug: (303, 444),
-        scour: (580, 688),
-        regal: (579, 365),
-        annul: (226, 372),
-        transmute: (71, 368),
-        inv: (1713, 828),
-    },
+    inv_samples: None,
     platform: None,
     inv_region: None,
     stash_region: None,
     game_window_region: None,
+    pointer_scale: Some(1.25),
+    stash_grid: None,
 };
 
 static SETTINGS: LazyLock<RwLock<Settings>> = LazyLock::new(|| RwLock::new(DEFAULT_SETTINGS.clone()));
@@ -145,18 +147,6 @@ fn main() -> anyhow::Result<()> {
     // plug in our fake input device
     let _ = FAKE_DEVICE.lock().synchronize();
 
-    // init wayland
-    //let conn = Connection::connect_to_env().expect("Wayland not initialized");
-    //let display = conn.display();
-    //let mut event_queue = conn.new_event_queue();
-    //let qh = event_queue.handle();
-
-    //let _registry = display.get_registry(&qh, ());
-
-    //let mut dat = AppData;
-    //event_queue.roundtrip(&mut dat);
-    //event_queue.blocking_dispatch(&mut dat);
-
     let set = load_config(&config_path(), Some(&DEFAULT_SETTINGS))?;
 
     *SETTINGS.write() = set;
@@ -175,16 +165,15 @@ fn main() -> anyhow::Result<()> {
 
     match args.get(0).map(|x| &**x) {
         Some("config") => {
-            let s = serde_json::to_string(&DEFAULT_SETTINGS).unwrap();
-            println!("{}", s);
-            return Ok(())
+            // Print the ACTIVE config. Calibration is only inspectable this way.
+            println!("{}", serde_json::to_string_pretty(&*SETTINGS.read())?);
+            return Ok(());
         }
         Some("version") | Some("--version") => {
             println!("little_oil v{}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
         Some("sort") => {
-            dbg!(&args);
             let times = args
                 .get(1)
                 .map(|x| x.parse())
@@ -194,7 +183,8 @@ fn main() -> anyhow::Result<()> {
             return sort_quad(times);
         }
         Some("empty") => {
-            return empty_inv(&SETTINGS.read());
+            let settings = SETTINGS.read().clone();
+            return empty_inv(&settings);
         }
         Some("roll") => {
             let file = args.get(1).expect("missing name to roll");
@@ -209,6 +199,37 @@ fn main() -> anyhow::Result<()> {
         }
         Some("reset_inv") => {
             return reset_inv_colors();
+        }
+        Some("calibrate-pointer") => {
+            if SETTINGS.read().platform.unwrap_or_else(Platform::detect) != Platform::Wayland {
+                bail!("calibrate-pointer is Wayland-only; set pointer_scale manually in config");
+            }
+            return calibrate_pointer();
+        }
+        Some("calibrate-stash") => {
+            return calibrate_stash();
+        }
+        Some("stash") => {
+            let mode = args.get(1).map(|x| &**x);
+            match mode {
+                Some("click") => {
+                    let times = args
+                        .get(2)
+                        .map(|x| x.parse())
+                        .unwrap_or(Ok(40))
+                        .expect("invalid number");
+                    return sort_quad(times);
+                }
+                Some("copy") => {
+                    return stash_copy();
+                }
+                _ => {
+                    println!("Usage: little_oil stash <click|copy> [times]");
+                    println!("  click <times>  Left-click every highlighted cell (hold Ctrl to pull, Shift to identify)");
+                    println!("  copy           Hover every highlighted cell and Ctrl+Alt+C it, printing unique items");
+                    return Ok(());
+                }
+            }
         }
         Some("set-region") => {
             let region_name = args.get(1).map(|x| &**x).unwrap_or("help");
@@ -289,26 +310,10 @@ fn main() -> anyhow::Result<()> {
         None => {}
     }
 
-    println!("starting in inputbot mode");
-
-    //KeybdKey::HomeKey.bind(move || {
-    //sort_quad(40);
-    //});
-    //KeybdKey::AKey.bind(move || {
-    //empty_inv();
-    //});
-
-    //KeybdKey::F7Key.bind(move || {
-    //chance();
-    //});
-
-    //let inputs = std::thread::spawn(|| inputbot::handle_input_events());
-
     let cmdline = std::thread::spawn(move || {
         command_line();
     });
 
-    //inputs.join().unwrap();
     cmdline.join().unwrap();
     Ok(())
 }
@@ -322,47 +327,31 @@ fn split_space(input: &str) -> (&str, &str) {
     return (input, "");
 }
 
-fn read_item_on_cursor() -> String {
+fn try_read_item_on_cursor() -> Option<String> {
     use wl_clipboard_rs::utils::{is_primary_selection_supported, PrimarySelectionCheckError};
 
     match is_primary_selection_supported() {
-        Ok(_supported) => {
-            // We have our definitive result. False means that ext/wlr-data-control is present
-            // and did not signal the primary selection support, or that only wlr-data-control
-            // version 1 is present (which does not support primary selection).
-            //println!("primary selection supported: {}", supported);
-        },
+        Ok(_supported) => {}
         Err(PrimarySelectionCheckError::NoSeats) => {
-            // Impossible to give a definitive result. Primary selection may or may not be
-            // supported.
-
-            // The required protocol (ext-data-control, or wlr-data-control version 2) is there,
-            // but there are no seats. Unfortunately, at least one seat is needed to check for the
-            // primary clipboard support.
             println!("no seats, cannot check for primary selection support");
-            return String::new();
-        },
+            return None;
+        }
         Err(PrimarySelectionCheckError::MissingProtocol) => {
-            // The data-control protocol (required for wl-clipboard-rs operation) is not
-            // supported by the compositor.
             println!("data-control protocol not supported");
-            return String::new();
-        },
+            return None;
+        }
         Err(e) => {
             println!("error checking for primary selection support: {:?}", e);
-            return String::new();
-            // Some communication error occurred.
+            return None;
         }
     }
 
     // clear the clipboard
     {
         use wl_clipboard_rs::copy::{copy, MimeType, Options, Source};
-
         let opts = Options::new();
         copy(opts, Source::Bytes([].into()), MimeType::Autodetect).unwrap();
     }
-
 
     let mut i = 0;
     loop {
@@ -377,13 +366,11 @@ fn read_item_on_cursor() -> String {
             device.release(key_codes::KEY_C).unwrap();
             device.release(key_codes::KEY_LEFTALT).unwrap();
             device.release(key_codes::KEY_LEFTCTRL).unwrap();
-
         }
 
         //250 ms total
         for _ in 0..50 {
             std::thread::sleep(std::time::Duration::from_millis(5));
-
 
             use wl_clipboard_rs::{paste::{get_contents, ClipboardType, Error, MimeType, Seat}};
 
@@ -393,7 +380,7 @@ fn read_item_on_cursor() -> String {
                     pipe.read_to_end(&mut contents).unwrap();
                     let clip_res = String::from_utf8_lossy(&contents);
                     if clip_res.len() > 0 {
-                        return clip_res.to_string();
+                        return Some(clip_res.to_string());
                     }
                 }
                 Err(Error::NoSeats) => {
@@ -413,12 +400,265 @@ fn read_item_on_cursor() -> String {
 
         i += 1;
         if i > 5 {
-                println!("clipboard was always empty, giving up");
-            panic!("could not read item on cursor");
+            println!("clipboard was always empty, giving up");
+            return None;
         }
 
         std::thread::sleep(std::time::Duration::from_millis(rand::random_range(1..150)));
     }
+}
+
+fn read_item_on_cursor() -> String {
+    try_read_item_on_cursor().expect("could not read item on cursor")
+}
+
+
+/// Print a prompt, mirror it to notify-send on Linux, and block until Enter.
+fn prompt_enter(msg: &str) -> anyhow::Result<()> {
+    println!("\n>>> {msg}\n    Press Enter when ready...");
+    #[cfg(target_os = "linux")]
+    let _ = Command::new("notify-send")
+        .args(["-u", "critical", "Little Oil — calibration", msg])
+        .spawn();
+    let mut line = String::new();
+    io::stdin().read_line(&mut line)?;
+    Ok(())
+}
+
+
+fn calibrate_pointer() -> anyhow::Result<()> {
+    const D: i32 = 400; // device units; large enough that the two cursor
+                        // positions cannot overlap even at max deceleration
+    println!("Measuring pointer scale. Do not move the mouse or type.");
+    println!("Close any animated window; a static desktop measures cleanly.");
+
+    device::pin_cursor_to_origin();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let before = platform::wayland::capture_all_with_cursor()?;
+
+    device::move_mouse_raw(D, D);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let after = platform::wayland::capture_all_with_cursor()?;
+
+    let bounds = Rect {
+        x: 0,
+        y: 0,
+        width: before.width as u32,
+        height: before.height as u32,
+    };
+    let clusters = screenshot::diff_clusters(&before, &after, bounds, 4)?;
+    let [a, b] = clusters.as_slice() else {
+        bail!(
+            "Expected exactly 2 changed regions (cursor before and after), found {}. \
+             Something on screen is animating — close it and retry.",
+            clusters.len()
+        );
+    };
+
+    let (ax, ay) = a.center();
+    let (bx, by) = b.center();
+    let dx = (bx as f32 - ax as f32).abs();
+    let dy = (by as f32 - ay as f32).abs();
+    if dx < 1.0 || dy < 1.0 {
+        bail!("Cursor did not move measurably on both axes — got dx={dx}, dy={dy}");
+    }
+
+    let sx = D as f32 / dx;
+    let sy = D as f32 / dy;
+    if (sx - sy).abs() / sx.max(sy) > 0.02 {
+        bail!(
+            "Axes scale differently (x={sx:.4}, y={sy:.4}) — pointer_scale assumes \
+             one factor. Set pointer_scale manually in config."
+        );
+    }
+    let scale = (sx + sy) / 2.0;
+
+    {
+        let mut settings = SETTINGS.write();
+        settings.pointer_scale = Some(scale);
+        save_config(&config_path(), &*settings)?;
+    }
+    println!("pointer_scale = {scale:.4} (was measured over {D} device units)");
+    Ok(())
+}
+
+fn calibrate_stash() -> anyhow::Result<()> {
+    let snapshot = { SETTINGS.read().clone() };
+
+    let _game_region = snapshot
+        .game_window_region
+        .ok_or_else(|| anyhow::anyhow!("Game window region not set — run: little_oil set-region window"))?;
+    let stash_region = snapshot
+        .stash_region
+        .ok_or_else(|| anyhow::anyhow!("Stash region not set — run: little_oil set-region stash"))?;
+
+    prompt_enter("Open the quad tab. Clear the search box so NOTHING is highlighted.")?;
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let base = snapshot.screenshot()?;
+
+    // Convert stash_region from screen space to frame-pixel space.
+    let (bx, by) = base.from_screen(stash_region.x, stash_region.y).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Stash region starts outside the game window region — re-run set-region window and set-region stash"
+        )
+    })?;
+    let bounds = Rect {
+        x: bx,
+        y: by,
+        width: stash_region.width.min(base.width as u32 - bx),
+        height: stash_region.height.min(base.height as u32 - by),
+    };
+
+    prompt_enter("Put ONE 1×1 item in the TOP-LEFT slot and search its name so only it is highlighted.")?;
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let tl = snapshot.screenshot()?;
+
+    let tl_clusters = screenshot::diff_clusters(&base, &tl, bounds, 20)?;
+    let [tl_cell] = tl_clusters.as_slice() else {
+        bail!(
+            "Expected exactly 1 highlighted cell in the top-left capture, found {}. \
+             Make sure only one item matches the search, and that the stash region \
+             covers only the 24x24 grid (not the search box).",
+            tl_clusters.len()
+        );
+    };
+
+    // Derive highlight_color from the tl cluster's bottom boundary row.
+    use std::collections::HashMap;
+    let mut color_tally: HashMap<u32, u32> = HashMap::new();
+    let by_abs = (tl_cell.y + tl_cell.height.saturating_sub(1)) as usize;
+    for x in tl_cell.x as usize..(tl_cell.x + tl_cell.width) as usize {
+        if base.try_get_pixel(x, by_abs) != tl.try_get_pixel(x, by_abs) {
+            if let Some(c) = tl.try_get_pixel(x, by_abs) {
+                *color_tally.entry(c).or_insert(0) += 1;
+            }
+        }
+    }
+    let highlight_color = color_tally
+        .into_iter()
+        .max_by_key(|(_, count)| *count)
+        .map(|(c, _)| c)
+        .ok_or_else(|| anyhow::anyhow!(
+            "Could not determine highlight color — the highlighted cell's bottom edge did not change"
+        ))?;
+
+    prompt_enter("Move that item to the BOTTOM-RIGHT slot and search again.")?;
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let br = snapshot.screenshot()?;
+
+    let br_clusters = screenshot::diff_clusters(&base, &br, bounds, 20)?;
+    let [br_cell] = br_clusters.as_slice() else {
+        bail!(
+            "Expected exactly 1 highlighted cell in the bottom-right capture, found {}. \
+             Make sure only one item matches the search.",
+            br_clusters.len()
+        );
+    };
+
+    let grid = StashGrid::from_corners(*tl_cell, *br_cell, highlight_color)?;
+
+    prompt_enter("Move that item to any MIDDLE slot and search again.")?;
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let mid = snapshot.screenshot()?;
+
+    let mid_clusters = screenshot::diff_clusters(&base, &mid, bounds, 20)?;
+    let [mid_cell] = mid_clusters.as_slice() else {
+        bail!(
+            "Expected exactly 1 highlighted cell in the middle capture, found {}. \
+             Make sure only one item matches the search.",
+            mid_clusters.len()
+        );
+    };
+
+    // Find the (col, row) whose cell_center is nearest the middle cluster's center.
+    let (mcx, mcy) = mid_cell.center();
+    let mut best_col = 0usize;
+    let mut best_row = 0usize;
+    let mut best_dist = f64::MAX;
+    for col in 0..QUAD_COLS {
+        for row in 0..QUAD_ROWS {
+            let (ccx, ccy) = grid.cell_center(col, row);
+            let dx = ccx as f64 - mcx as f64;
+            let dy = ccy as f64 - mcy as f64;
+            let dist = (dx * dx + dy * dy).sqrt();
+            if dist < best_dist {
+                best_dist = dist;
+                best_col = col;
+                best_row = row;
+            }
+        }
+    }
+
+    // Validate: the cell center must be inside the mid cluster expanded by 4 px per side.
+    let (ccx, ccy) = grid.cell_center(best_col, best_row);
+    if ccx < mid_cell.x.saturating_sub(4)
+        || ccx > mid_cell.x + mid_cell.width + 4
+        || ccy < mid_cell.y.saturating_sub(4)
+        || ccy > mid_cell.y + mid_cell.height + 4
+    {
+        bail!(
+            "Calibration failed validation: middle item at ({}, {}) does not line up with computed cell ({}, {}) — re-run calibration",
+            mcx, mcy, ccx, ccy
+        );
+    }
+
+    if !grid.is_highlighted(&mid, best_col, best_row) {
+        bail!(
+            "Computed grid found the middle cell but its bottom edge does not match the calibrated highlight color — re-run calibration"
+        );
+    }
+
+    {
+        let mut settings = SETTINGS.write();
+        settings.stash_grid = Some(grid.clone());
+        save_config(&config_path(), &*settings)?;
+    }
+
+    let (sx, sy) = base.to_screen(grid.cols[0], grid.rows[0]);
+    println!(
+        "Stash grid calibrated: cell {}x{}, frame-pixel origin ({}, {}) = screen ({}, {}), highlight 0x{:08X}",
+        grid.cell_w, grid.cell_h, grid.cols[0], grid.rows[0], sx, sy, grid.highlight_color
+    );
+    Ok(())
+}
+
+
+
+fn stash_copy() -> anyhow::Result<()> {
+    let settings = SETTINGS.read();
+    let grid = match &settings.stash_grid {
+        Some(g) => g.clone(),
+        None => bail!("Stash grid not calibrated — run: little_oil calibrate-stash"),
+    };
+    let frame = settings.screenshot()?;
+    drop(settings);
+
+    let mut seen: Vec<String> = Vec::new();
+    let mut failed = 0u32;
+
+    for row in 0..QUAD_ROWS {
+        for col in 0..QUAD_COLS {
+            if !grid.is_highlighted(&frame, col, row) {
+                continue;
+            }
+            let (px, py) = grid.cell_center(col, row);
+            let (sx, sy) = frame.to_screen(px, py);
+            move_mouse(sx, sy);
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            match try_read_item_on_cursor() {
+                Some(text) if !seen.contains(&text) => seen.push(text),
+                Some(_) => {}
+                None => failed += 1,
+            }
+        }
+    }
+
+    for item in &seen {
+        println!("{item}");
+        println!("--------");
+    }
+    println!("{} unique items, {} cells failed to copy", seen.len(), failed);
+    Ok(())
 }
 
 fn chance() -> anyhow::Result<()> {
@@ -447,15 +687,14 @@ static HELP: &str = r#"
 help: Show this menu
 version: Print version and exit
 set-region <inventory|stash|window>: Select and save a screen region
+calibrate-pointer: Measure pointer scale (run once per machine)
+calibrate-stash: Calibrate the 24x24 quad tab grid (4 guided screenshots)
+stash <click|copy> [times]: Act on highlighted quad-tab cells
 pull <delay>: Change delay for pulling out of quad tab
 push <delay>: Change delay for pushing into tab/trade
 div <delay>: Change delay for div macro
 chrome <file> <times>: Open a autoroll file, with name <file>, and roll item <times>
 mchrome <file>: Create example chrome file with name <file>. To be used with chrome later.
-
-Press Home to pull from tab
-Press Insert to push into inv
-Press F7 to use chance macro
 
 Press CTRL + C to quit this program.
 "#;
@@ -463,42 +702,26 @@ Press CTRL + C to quit this program.
 fn command_line() {
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
-        match split_space(&line.unwrap()) {
-            //TODO find rusty way to do this DRY
-            ("pull", rest @ _) => {
-                println!("pull delay is {}", rest);
-                match rest.parse() {
-                    Ok(x) => {
-                        let mut s = SETTINGS.write();
-                        s.pull_delay = x;
-                        save_config(&config_path(), &*s).unwrap();
+        let line = line.unwrap();
+        let (cmd, rest) = split_space(&line);
+        match cmd {
+            "pull" | "push" | "div" => match rest.parse::<u64>() {
+                Ok(x) => {
+                    let mut s = SETTINGS.write();
+                    match cmd {
+                        "pull" => s.pull_delay = x,
+                        "push" => s.push_delay = x,
+                        "div" => s.div_delay = x,
+                        _ => unreachable!(),
                     }
-                    Err(_) => println!("could not delay"),
-                }
-            }
-            ("push", rest @ _) => {
-                println!("push delay is {}", rest);
-                match rest.parse() {
-                    Ok(x) => {
-                        let mut s = SETTINGS.write();
-                        s.push_delay = x;
-                        //save_config(CONFIG_PATH, &s).unwrap();
+                    println!("{cmd} delay is {x}");
+                    if let Err(e) = save_config(&config_path(), &*s) {
+                        println!("could not save config: {e}");
                     }
-                    Err(_) => println!("could not delay"),
                 }
-            }
-            ("div", rest @ _) => {
-                println!("div delay is {}", rest);
-                match rest.parse() {
-                    Ok(x) => {
-                        let mut s = SETTINGS.write();
-                        s.div_delay = x;
-                        //save_config(CONFIG_PATH, &s).unwrap();
-                    }
-                    Err(_) => println!("could not delay"),
-                }
-            }
-            ("chrome", rest @ _) => {
+                Err(_) => println!("invalid delay: {rest}"),
+            },
+            "chrome" => {
                 let (file, times) = split_space(rest);
                 println!("Loading chrome file {}", file);
 
@@ -509,11 +732,11 @@ fn command_line() {
                     }
                 }
             }
-            ("mchrome", file @ _) => {
-                println!("Making chrome file {}", file);
+            "mchrome" => {
+                println!("Making chrome file {}", rest);
 
                 save_config(
-                    std::path::Path::new(file),
+                    std::path::Path::new(rest),
                     &AutoRollConfig {
                         auto_aug_regal: false,
                         item_name: "Medium Cluster Jewel".to_string(),
@@ -537,110 +760,126 @@ fn command_line() {
                 )
                 .unwrap();
             }
-            ("help", _) => {
+            "help" => {
                 println!("Available Commands: {}", HELP);
             }
-            (_, _) => println!("Unknown command"),
+            _ => println!("Unknown command"),
         }
     }
 }
 
+/// Three probes across the vertical middle of an inventory slot, at 25%, 50%
+/// and 75% of its width, in frame-pixel space. None if the slot falls outside
+/// the captured frame.
+fn inv_probes(
+    frame: &ScreenshotData,
+    region: ScreenRegion,
+    col: u32,
+    row: u32,
+) -> Option<[(usize, usize); 3]> {
+    if region.width < 12 || region.height < 5 {
+        return None;
+    }
+    let dx = region.width / 12;
+    let dy = region.height / 5;
+    // Validate the far corner of the slot is in frame.
+    let _far = frame.from_screen(region.x + (col + 1) * dx - 1, region.y + (row + 1) * dy - 1)?;
+    let (ox, oy) = frame.from_screen(region.x + col * dx, region.y + row * dy)?;
+    let y = (oy + dy / 2) as usize;
+    Some([
+        ((ox + dx / 4) as usize, y),
+        ((ox + dx / 2) as usize, y),
+        ((ox + dx * 3 / 4) as usize, y),
+    ])
+}
 
 fn reset_inv_colors() -> anyhow::Result<()> {
     let settings = SETTINGS.read();
     let inv_region = settings
         .inv_region
-        .expect("Inventory region not calibrated — run: little_oil set-region inventory");
-    let inv_delta = inv_region.width / 12;
-    let inv_loc = (inv_region.x, inv_region.y);
+        .ok_or_else(|| anyhow::anyhow!("Inventory region not calibrated — run: little_oil set-region inventory"))?;
 
     let frame = settings.screenshot()?;
     drop(settings);
 
-    //click(618, 618);
-
-
-    let mut colors = Vec::with_capacity(60);
-    colors.resize(60, 0);
+    let mut samples = vec![[0u32; 3]; 60];
 
     for x in 0..12 {
         for y in 0..5 {
-            let mousex = x * inv_delta + inv_loc.0;
-            let mousey = y * inv_delta + inv_loc.1;
-            let color = frame.get_pixel(mousex as usize, mousey as usize);
-
-            colors[(x * 5 + y) as usize] = color;
+            let probes = inv_probes(&frame, inv_region, x, y).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Inventory slot ({x}, {y}) falls outside the game window region — re-run set-region window and set-region inventory"
+                )
+            })?;
+            samples[(x * 5 + y) as usize] = [
+                frame.try_get_pixel(probes[0].0, probes[0].1).unwrap_or(0),
+                frame.try_get_pixel(probes[1].0, probes[1].1).unwrap_or(0),
+                frame.try_get_pixel(probes[2].0, probes[2].1).unwrap_or(0),
+            ];
         }
     }
 
     let mut settings = SETTINGS.write();
 
     let note = Command::new("notify-send")
-        .args(["-u", "low", "Little Oil", &format!("Inventory colors calibrated: {} slots", colors.len())])
+        .args(["-u", "low", "Little Oil", &format!("Inventory colors calibrated: {} slots x 3 samples", samples.len())])
         .spawn();
     if let Err(e) = note {
         eprintln!("notify-send failed: {e}");
     }
-    settings.inv_colors = Some(colors);
+    settings.inv_samples = Some(samples);
 
     save_config(&config_path(), &*settings)?;
     Ok(())
 }
 
-fn empty_inv_macro(settings: &Settings, start_slot: u32, delay: u64) -> anyhow::Result<u32> {
+fn empty_inv_macro(settings: &Settings, delay: u64) -> anyhow::Result<u32> {
     let inv_region = settings
         .inv_region
-        .expect("Inventory region not calibrated — run: little_oil set-region inventory");
-    let inv_delta = inv_region.width / 12;
-    let inv_loc = (inv_region.x, inv_region.y);
+        .ok_or_else(|| anyhow::anyhow!("Inventory region not calibrated — run: little_oil set-region inventory"))?;
 
-    info!(inv_delta, x = inv_loc.0, y = inv_loc.1, "Emptying inv");
+    info!("Emptying inv");
 
     let frame = settings.screenshot()?;
 
-    //TODO make it not allocate
-    let default_colors = {
-        let mut x = vec![0; 60];
-        x.resize(60, 0);
-        x
+    let expected = match settings.inv_samples.as_ref() {
+        Some(s) if s.len() == 60 => s,
+        _ => bail!("Inventory colors not calibrated — run: little_oil reset_inv"),
     };
-
-    let inv_color = settings.inv_colors.as_ref().unwrap_or(&default_colors);
     let mut clicked: u32 = 0;
 
-    for x in (start_slot / 5)..12 {
-        for y in (start_slot % 5)..5 {
-            let mousex = x * inv_delta + inv_loc.0;
-            let mousey = y * inv_delta + inv_loc.1;
-            let color = frame.get_pixel(mousex as usize, mousey as usize);
-            //println!("{},", color);
-            let is_right_color = color == inv_color[(x * 5 + y) as usize];
-            //println!("{} {} {} {}", x, y, color, is_right_color);
+    for x in 0..12 {
+        for y in 0..5 {
+            let probes = inv_probes(&frame, inv_region, x, y).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Inventory slot ({x}, {y}) falls outside the game window region — re-run set-region window and set-region inventory"
+                )
+            })?;
+            let actual = [
+                frame.try_get_pixel(probes[0].0, probes[0].1).unwrap_or(0),
+                frame.try_get_pixel(probes[1].0, probes[1].1).unwrap_or(0),
+                frame.try_get_pixel(probes[2].0, probes[2].1).unwrap_or(0),
+            ];
+            let stored = expected[(x * 5 + y) as usize];
+            let matches = actual.iter().zip(stored.iter()).filter(|(a, e)| a == e).count();
 
-            if !is_right_color {
-                let (rx, ry) = (
-                    (x * inv_delta + inv_loc.0) as i32,
-                    (y * inv_delta + inv_loc.1) as i32,
-                );
-
+            if matches < 2 {
                 debug!(x, y, "clicking inv");
-
-                ctrl_click(rx, ry);
+                let (px, py) = (probes[1].0 as u32, probes[1].1 as u32);
+                let (sx, sy) = frame.to_screen(px, py);
+                ctrl_click(sx, sy);
                 clicked += 1;
                 std::thread::sleep(std::time::Duration::from_millis(delay));
             }
         }
-        //return Ok(());
     }
 
     Ok(clicked)
-    //move_mouse(655, 801);
 }
 
 fn empty_inv(settings: &Settings) -> anyhow::Result<()> {
-    let slot = 0;
     std::thread::sleep(std::time::Duration::from_millis(500));
-    let clicked = empty_inv_macro(&settings, slot, settings.push_delay)?;
+    let clicked = empty_inv_macro(&settings, settings.push_delay)?;
     let note = Command::new("notify-send")
         .args(["-u", "low", "Little Oil", &format!("Inventory cleared: {} items moved", clicked)])
         .spawn();
@@ -651,96 +890,33 @@ fn empty_inv(settings: &Settings) -> anyhow::Result<()> {
 }
 
 
+
 fn sort_quad(times: u32) -> anyhow::Result<()> {
     std::thread::sleep(std::time::Duration::from_millis(300));
 
     let settings = SETTINGS.read();
     let delay = settings.pull_delay;
-
-    let game_window = settings.game_window_region.clone();
-    let screen_height = settings.screen_height;
+    let grid = match &settings.stash_grid {
+        Some(g) => g.clone(),
+        None => bail!("Stash grid not calibrated — run: little_oil calibrate-stash"),
+    };
     let frame = settings.screenshot()?;
     drop(settings);
 
-    let (left_edge, px, pys) = if let Some(win) = &game_window {
-        // Grid is 24x24 in the quad tab. Derive from window dimensions.
-        let margin = win.width / 72;
-        let cell_w = (win.width - margin * 2) / 24;
-        let cell_h = (win.height as f64 * 0.75) as u32 / 24;
-        let py_base = (win.y + win.height / 4) as usize;
-
-        let mut pys_arr = [0usize; 24];
-        for (i, entry) in pys_arr.iter_mut().enumerate() {
-            *entry = py_base + i * cell_h as usize;
-        }
-        (margin as usize, cell_w as usize, pys_arr)
-    } else {
-        // FALLBACK: existing hardcoded math (keeps working without calibration)
-        let height = screen_height.unwrap_or(1080);
-        let left_edge_v = if height == 1080 { 21usize } else if height == 1440 { 29 } else { panic!("invalid screen size") };
-        let px_v = if height == 1080 { ((2573 - 1920 - 15) / 24) as usize } else if height == 1440 { (830 - 795) as usize } else { panic!("invalid screen size") };
-        let pys_v = if height == 1080 {
-            [160usize, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581, 607, 634, 660, 686, 712, 739, 765]
-        } else if height == 1440 {
-            [260, 295, 330, 365, 400, 436, 471, 506, 541, 576, 611, 646, 681, 716, 751, 787, 822, 857, 892, 927, 962, 997, 1032, 1067]
-        } else {
-            panic!("invalid screen size");
-        };
-        (left_edge_v, px_v, pys_v)
-    };
-
-    println!("take tab (delay {})", delay);
-
-    //160, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555, 581, 607,
-    //634, 660, 686, 712, 739, 765, //792,
-    //];
-
     let mut movesleft = times;
-    for y in 0..24 {
-        let ry = pys[y];
-
-        for x in 0..24 {
+    for row in 0..QUAD_ROWS {
+        for col in 0..QUAD_COLS {
             if movesleft < 1 {
-                break;
+                return Ok(());
             }
-
-            let rx = x * px + left_edge;
-
-            let col1 = frame.get_pixel(rx, ry);
-            let col2 = frame.get_pixel(rx + 7, ry);
-            let col3 = frame.get_pixel(rx + 15, ry);
-
-            //let select_color = 2008344320;
-            //let select_color = 2008344575;
-            let select_color = 3887364095;
-            debug!(x, y, "pixels");
-            trace!(col1, col2, col3, select_color);
-
-            if col1 == select_color || col2 == select_color || col3 == select_color {
-                click((rx + 10) as i32, (ry - 10) as i32);
-                std::thread::sleep(std::time::Duration::from_millis(delay - 10));
+            if grid.is_highlighted(&frame, col, row) {
+                let (px, py) = grid.cell_center(col, row);
+                let (sx, sy) = frame.to_screen(px, py);
+                click(sx, sy);
+                std::thread::sleep(std::time::Duration::from_millis(delay));
                 movesleft -= 1;
-            };
-
-            //if(slotIsSelected(img, rx, ry) || slotIsSelected(img, rx + 15, ry)){
-            //img.setPixelColor(Jimp.cssColorToHex("#FF0000"), rx + 1, ry);
-            //await stash.click([rx + 10, ry - 10]);
-            //await robot.moveMouse(654, 801);
-            //await sleep(delays.grabTab);
-            //movesleft--;
-            //}
-            //img.setPixelColor(Jimp.cssColorToHex("#FFFFFF"), rx, ry);
+            }
         }
     }
-
     Ok(())
-    //use std::convert::TryInto;
-    //image::save_buffer(
-    //"./image2.png",
-    //&frame.pixels,
-    //frame.width.try_into().unwrap(),
-    //frame.height.try_into().unwrap(),
-    //image::ColorType::Rgba8,
-    //)
-    //.unwrap();
 }

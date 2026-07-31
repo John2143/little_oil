@@ -338,48 +338,35 @@ impl StashAPIResult {
     }
 }
 
-//TODO copy less code
+
 impl ItemList<'_> {
     fn take(&self) {
-        let (delay, height) = {
+        let (delay, grid, frame) = {
             let settings = crate::SETTINGS.read();
-            (settings.pull_delay, settings.screen_height.unwrap_or(1080))
-        };
-
-        let left_edge = if height == 1080 {
-            21
-        } else if height == 1440 {
-            29
-        } else {
-            panic!("invalid screen size");
-        };
-
-        let px = if height == 1080 {
-            (2573 - 1920) / 24
-        } else if height == 1440 {
-            830 - 795
-        } else {
-            panic!("invalid screen size");
-        };
-
-        let pys = if height == 1080 {
-            [
-                160, 186, 212, 239, 265, 291, 318, 344, 370, 397, 423, 449, 476, 502, 528, 555,
-                581, 607, 634, 660, 686, 712, 739, 765, //792,
-            ]
-        } else if height == 1440 {
-            [
-                260, 295, 330, 365, 400, 436, 471, 506, 541, 576, 611, 646, 681, 716, 751, 787,
-                822, 857, 892, 927, 962, 997, 1032, 1067,
-            ]
-        } else {
-            panic!("invalid screen size");
+            let grid = match &settings.stash_grid {
+                Some(g) => g.clone(),
+                None => {
+                    println!("Stash grid not calibrated — run: little_oil calibrate-stash");
+                    return;
+                }
+            };
+            match settings.screenshot() {
+                Ok(f) => (settings.pull_delay, grid, f),
+                Err(e) => {
+                    println!("Could not screenshot: {e}");
+                    return;
+                }
+            }
         };
 
         let click_quad = |x: usize, y: usize| {
-            let ry = pys[y];
-            let rx = x * px + left_edge;
-            crate::click((rx + 10) as i32, (ry - 10) as i32);
+            if x >= 24 || y >= 24 {
+                println!("Item slot ({x}, {y}) is outside the 24x24 grid, skipping");
+                return;
+            }
+            let (px, py) = grid.cell_center(x, y);
+            let (sx, sy) = frame.to_screen(px, py);
+            crate::click(sx, sy);
             std::thread::sleep(std::time::Duration::from_millis(delay + 10));
         };
 
@@ -396,9 +383,7 @@ impl ItemList<'_> {
             ("Amulet", self.amulet),
         ];
 
-        //use inputbot::KeybdKey;
-        //KeybdKey::LControlKey.press();
-        std::thread::sleep(std::time::Duration::from_millis(delay - 10));
+        std::thread::sleep(std::time::Duration::from_millis(delay));
         for (name, c) in clicks {
             match c {
                 Some(s) => {
@@ -410,8 +395,6 @@ impl ItemList<'_> {
                 }
             }
         }
-
-        //KeybdKey::LControlKey.release();
     }
 }
 
