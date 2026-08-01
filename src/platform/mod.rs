@@ -1,3 +1,4 @@
+pub(crate) mod virtual_pointer;
 pub(crate) mod wayland;
 mod x11;
 mod windows;
