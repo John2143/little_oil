@@ -39,13 +39,19 @@ Any other Wayland compositor implementing those protocols should work too.
   normally.
 - **Fractional output scaling** is handled — grim is pinned to scale 1
   (`-s 1`), so captures match screen coordinates at any scale factor.
-- **Pointer scale is per machine** (input device + compositor accel): re-run
-  `calibrate-pointer` if clicks land short or overshoot.
+- **Pointer control on niri is absolute.** niri ignores relative uinput motion,
+  so on niri (and only niri — gated by `niri msg outputs`) pointer control goes
+  through the wlr virtual-pointer protocol's `motion_absolute`; there is no
+  pointer scale, and `calibrate-pointer` bails with an explanatory message.
+  On every other Wayland compositor (e.g. Hyprland) the uinput relative path is
+  still used, and pointer scale is per machine (input device + compositor
+  accel): re-run `calibrate-pointer` if clicks land short or overshoot.
 
 ### First run on any compositor
 
 1. `little_oil set-region window` — drag around the entire PoE window.
-2. `little_oil calibrate-pointer` — run once per machine.
+2. `little_oil calibrate-pointer` — run once per machine (**skip on niri**;
+   pointer control there is absolute and needs no scale).
 3. Per-layout calibration: `set-region inventory`, `set-region stash`,
    `set-region map`, `calibrate-stash`, `calibrate-map`, `calibrate-currency`
    (or `calibrate-point <name>` per slot), `calibrate-point filter`.

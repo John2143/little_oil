@@ -249,9 +249,19 @@ fn main() -> anyhow::Result<()> {
             return reset_inv_colors();
         }
         Some("calibrate-pointer") => {
-            if SETTINGS.read().platform.unwrap_or_else(Platform::detect) == Platform::Wayland {
+            // The wlr virtual-pointer path (absolute coordinates, no scale)
+            // only activates on niri (it is gated by `niri msg outputs` in
+            // platform/virtual_pointer.rs). On every other Wayland compositor
+            // — e.g. Hyprland — pointer control still uses the uinput relative
+            // path and pointer_scale still needs calibration.
+            let on_niri = std::process::Command::new("niri")
+                .args(["msg", "outputs"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if SETTINGS.read().platform.unwrap_or_else(Platform::detect) == Platform::Wayland && on_niri {
                 bail!(
-                    "calibrate-pointer is not needed on Wayland — pointer control uses absolute \
+                    "calibrate-pointer is not needed on niri — pointer control uses absolute \
                      coordinates via the wlr virtual-pointer protocol. Set pointer_scale manually \
                      in config for X11/Windows only."
                 );
