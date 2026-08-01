@@ -1,0 +1,56 @@
+{
+  "item_name": "Jade Flask",
+  "mods": [
+    {
+      "name": "Flagellant's",
+      "is_prefix": true
+    },
+    {
+      "name": "Experimenter's",
+      "is_prefix": true
+    },
+    {
+      "name": "Abecedarian's",
+      "is_prefix": true
+    },
+    {
+      "name": "Dabbler's",
+      "is_prefix": true
+    },
+    {
+      "name": "Alchemist's",
+      "is_prefix": true
+    },
+    {
+      "name": "of the Gazelle",
+      "is_prefix": false
+    },
+    {
+      "name": "of the Antelope",
+      "is_prefix": false
+    },
+    {
+      "name": "of the Ibex",
+      "is_prefix": false
+    },
+    {
+      "name": "of the Impala",
+      "is_prefix": false
+    },
+    {
+      "name": "of the Cheetah",
+      "is_prefix": false
+    },
+    {
+      "name": "of Incision",
+      "is_prefix": false
+    },
+    {
+      "name": "of the Armadillo",
+      "is_prefix": false
+    }
+  ],
+  "auto_aug_regal": false,
+  "any_two_t1": false,
+  "needs_prefix_and_suffix": true
+}
