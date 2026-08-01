@@ -1,0 +1,10 @@
+{
+  "item_name": "Granite Flask",
+  "mods": [
+    {
+      "name": "of the Rainbow",
+      "is_prefix": false
+    }
+  ],
+  "auto_aug_regal": false
+}

@@ -1,0 +1,333 @@
+{
+  "prefixes": [
+    {
+      "label": "Maximum Charges",
+      "tags": [],
+      "weight": 600,
+      "tiers": [
+        { "name": "Wide", "tier": 5, "ilvl": 2, "stats": ["+(16—19) to Maximum Charges"] },
+        { "name": "Plentiful", "tier": 4, "ilvl": 22, "stats": ["+(20—23) to Maximum Charges"] },
+        { "name": "Bountiful", "tier": 3, "ilvl": 42, "stats": ["+(24—27) to Maximum Charges"] },
+        { "name": "Abundant", "tier": 2, "ilvl": 62, "stats": ["+(28—31) to Maximum Charges"] },
+        { "name": "Ample", "tier": 1, "ilvl": 82, "stats": ["+(32—35) to Maximum Charges"] }
+      ]
+    },
+    {
+      "label": "increased Charge Recovery",
+      "tags": [],
+      "weight": 600,
+      "tiers": [
+        { "name": "Constant", "tier": 16, "ilvl": 3, "stats": ["(16—20)% increased Charge Recovery"] },
+        { "name": "Continuous", "tier": 13, "ilvl": 23, "stats": ["(21—25)% increased Charge Recovery"] },
+        { "name": "Endless", "tier": 9, "ilvl": 43, "stats": ["(26—30)% increased Charge Recovery"] },
+        { "name": "Bottomless", "tier": 5, "ilvl": 63, "stats": ["(31—45)% increased Charge Recovery"] },
+        { "name": "Perpetual", "tier": 2, "ilvl": 83, "stats": ["(46—50)% increased Charge Recovery"] }
+      ]
+    },
+    {
+      "label": "increased Charge Recovery, reduced effect",
+      "tags": [],
+      "weight": 600,
+      "tiers": [
+        { "name": "Doled", "tier": 14, "ilvl": 20, "stats": ["(37—42)% increased Charge Recovery", "25% reduced effect"] },
+        { "name": "Provisioned", "tier": 10, "ilvl": 36, "stats": ["(43—48)% increased Charge Recovery", "25% reduced effect"] },
+        { "name": "Measured", "tier": 7, "ilvl": 52, "stats": ["(49—54)% increased Charge Recovery", "25% reduced effect"] },
+        { "name": "Allocated", "tier": 4, "ilvl": 68, "stats": ["(55—60)% increased Charge Recovery", "25% reduced effect"] },
+        { "name": "Rationed", "tier": 1, "ilvl": 84, "stats": ["(61—66)% increased Charge Recovery", "25% reduced effect"] }
+      ]
+    },
+    {
+      "label": "chance to gain a Flask Charge on Critical Strike",
+      "tags": ["Critical"],
+      "weight": 600,
+      "tiers": [
+        { "name": "Medic's", "tier": 15, "ilvl": 8, "stats": ["(11—15)% chance to gain a Flask Charge when you deal a Critical Strike"] },
+        { "name": "Physician's", "tier": 12, "ilvl": 26, "stats": ["(16—20)% chance to gain a Flask Charge when you deal a Critical Strike"] },
+        { "name": "Doctor's", "tier": 8, "ilvl": 44, "stats": ["(21—25)% chance to gain a Flask Charge when you deal a Critical Strike"] },
+        { "name": "Specialist's", "tier": 6, "ilvl": 62, "stats": ["(26—30)% chance to gain a Flask Charge when you deal a Critical Strike"] },
+        { "name": "Surgeon's", "tier": 3, "ilvl": 80, "stats": ["(31—35)% chance to gain a Flask Charge when you deal a Critical Strike"] }
+      ]
+    },
+    {
+      "label": "Gain Charges when Hit",
+      "tags": [],
+      "weight": 600,
+      "tiers": [
+        { "name": "Transgressor's", "tier": 11, "ilvl": 29, "stats": ["Gain 1 Charges when you are Hit by an Enemy"] },
+        { "name": "Masochist's", "tier": 5, "ilvl": 63, "stats": ["Gain 2 Charges when you are Hit by an Enemy"] },
+        { "name": "Flagellant's", "tier": 3, "ilvl": 80, "stats": ["Gain 3 Charges when you are Hit by an Enemy"] }
+      ]
+    },
+    {
+      "label": "reduced Duration, increased effect",
+      "tags": [],
+      "weight": 1000,
+      "tiers": [
+        { "name": "Abecedarian's", "tier": 7, "ilvl": 20, "stats": ["(33—38)% reduced Duration", "25% increased effect"] },
+        { "name": "Dabbler's", "tier": 5, "ilvl": 50, "stats": ["(28—32)% reduced Duration", "25% increased effect"] },
+        { "name": "Alchemist's", "tier": 2, "ilvl": 80, "stats": ["(23—27)% reduced Duration", "25% increased effect"] }
+      ]
+    },
+    {
+      "label": "increased Duration",
+      "tags": [],
+      "weight": 600,
+      "tiers": [
+        { "name": "Investigator's", "tier": 7, "ilvl": 20, "stats": ["(16—20)% increased Duration"] },
+        { "name": "Analyst's", "tier": 6, "ilvl": 36, "stats": ["(21—25)% increased Duration"] },
+        { "name": "Examiner's", "tier": 4, "ilvl": 52, "stats": ["(26—30)% increased Duration"] },
+        { "name": "Clinician's", "tier": 3, "ilvl": 68, "stats": ["(31—35)% increased Duration"] },
+        { "name": "Experimenter's", "tier": 1, "ilvl": 84, "stats": ["(36—40)% increased Duration"] }
+      ]
+    },
+    {
+      "label": "reduced Charges per use",
+      "tags": [],
+      "weight": 600,
+      "tiers": [
+        { "name": "Apprentice's", "tier": 5, "ilvl": 14, "stats": ["(14—16)% reduced Charges per use"] },
+        { "name": "Scholar's", "tier": 4, "ilvl": 31, "stats": ["(17—19)% reduced Charges per use"] },
+        { "name": "Practitioner's", "tier": 3, "ilvl": 48, "stats": ["(20—22)% reduced Charges per use"] },
+        { "name": "Brewer's", "tier": 2, "ilvl": 65, "stats": ["(23—25)% reduced Charges per use"] },
+        { "name": "Chemist's", "tier": 1, "ilvl": 82, "stats": ["(26—28)% reduced Charges per use"] }
+      ]
+    }
+  ],
+  "suffixes": [
+    {
+      "label": "increased Armour during Effect",
+      "tags": ["Defences", "Armour"],
+      "weight": 750,
+      "tiers": [
+        { "name": "of the Abalone", "tier": 35, "ilvl": 6, "stats": ["(41—45)% increased Armour during Effect"] },
+        { "name": "of the Tortoise", "tier": 24, "ilvl": 32, "stats": ["(46—50)% increased Armour during Effect"] },
+        { "name": "of the Pangolin", "tier": 13, "ilvl": 58, "stats": ["(51—55)% increased Armour during Effect"] },
+        { "name": "of the Armadillo", "tier": 2, "ilvl": 84, "stats": ["(56—60)% increased Armour during Effect"] }
+      ]
+    },
+    {
+      "label": "increased Evasion Rating during Effect",
+      "tags": ["Defences", "Evasion"],
+      "weight": 750,
+      "tiers": [
+        { "name": "of the Gazelle", "tier": 35, "ilvl": 6, "stats": ["(41—45)% increased Evasion Rating during Effect"] },
+        { "name": "of the Antelope", "tier": 24, "ilvl": 32, "stats": ["(46—50)% increased Evasion Rating during Effect"] },
+        { "name": "of the Ibex", "tier": 13, "ilvl": 58, "stats": ["(51—55)% increased Evasion Rating during Effect"] },
+        { "name": "of the Impala", "tier": 2, "ilvl": 84, "stats": ["(56—60)% increased Evasion Rating during Effect"] }
+      ]
+    },
+    {
+      "label": "increased Movement Speed during Effect",
+      "tags": ["Speed"],
+      "weight": 1000,
+      "tiers": [
+        { "name": "of the Hare", "tier": 36, "ilvl": 5, "stats": ["(6—8)% increased Movement Speed during Effect"] },
+        { "name": "of the Lynx", "tier": 9, "ilvl": 65, "stats": ["(9—11)% increased Movement Speed during Effect"] },
+        { "name": "of the Cheetah", "tier": 1, "ilvl": 85, "stats": ["(12—14)% increased Movement Speed during Effect"] }
+      ]
+    },
+    {
+      "label": "increased Block and Stun Recovery during Effect",
+      "tags": [],
+      "weight": 600,
+      "tiers": [
+        { "name": "of Stiffness", "tier": 38, "ilvl": 1, "stats": ["(51—56)% increased Block and Stun Recovery during Effect"] },
+        { "name": "of Bracing", "tier": 30, "ilvl": 19, "stats": ["(57—62)% increased Block and Stun Recovery during Effect"] },
+        { "name": "of Ballast", "tier": 22, "ilvl": 37, "stats": ["(63—68)% increased Block and Stun Recovery during Effect"] },
+        { "name": "of Counterpoise", "tier": 14, "ilvl": 55, "stats": ["(69—74)% increased Block and Stun Recovery during Effect"] },
+        { "name": "of Stabilisation", "tier": 6, "ilvl": 73, "stats": ["(75—80)% increased Block and Stun Recovery during Effect"] }
+      ]
+    },
+    {
+      "label": "additional Elemental Resistances during Effect",
+      "tags": ["Elemental", "Resistance"],
+      "weight": 750,
+      "tiers": [
+        { "name": "of the Crystal", "tier": 38, "ilvl": 1, "stats": ["(12—14)% additional Elemental Resistances during Effect"] },
+        { "name": "of the Kaleidoscope", "tier": 20, "ilvl": 41, "stats": ["(15—17)% additional Elemental Resistances during Effect"] },
+        { "name": "of the Rainbow", "tier": 4, "ilvl": 81, "stats": ["(18—20)% additional Elemental Resistances during Effect"] }
+      ]
+    },
+    {
+      "label": "of Attack Damage Leeched as Life during Effect",
+      "tags": ["Life", "Attack"],
+      "weight": 600,
+      "tiers": [
+        { "name": "of Bloodshed", "tier": 33, "ilvl": 10, "stats": ["0.4% of Attack Damage Leeched as Life during Effect"] },
+        { "name": "of Gore", "tier": 29, "ilvl": 20, "stats": ["0.5% of Attack Damage Leeched as Life during Effect"] },
+        { "name": "of Carnage", "tier": 21, "ilvl": 40, "stats": ["0.6% of Attack Damage Leeched as Life during Effect"] },
+        { "name": "of Butchery", "tier": 12, "ilvl": 60, "stats": ["0.7% of Attack Damage Leeched as Life during Effect"] },
+        { "name": "of Bloodletting", "tier": 5, "ilvl": 80, "stats": ["0.8% of Attack Damage Leeched as Life during Effect"] }
+      ]
+    },
+    {
+      "label": "of Spell Damage Leeched as Energy Shield during Effect",
+      "tags": ["Defences", "Energy Shield", "Caster"],
+      "weight": 600,
+      "tiers": [
+        { "name": "of Diverting", "tier": 33, "ilvl": 10, "stats": ["0.4% of Spell Damage Leeched as Energy Shield during Effect"] },
+        { "name": "of Depletion", "tier": 29, "ilvl": 20, "stats": ["0.5% of Spell Damage Leeched as Energy Shield during Effect"] },
+        { "name": "of Tapping", "tier": 21, "ilvl": 40, "stats": ["0.6% of Spell Damage Leeched as Energy Shield during Effect"] },
+        { "name": "of Siphoning", "tier": 12, "ilvl": 60, "stats": ["0.7% of Spell Damage Leeched as Energy Shield during Effect"] },
+        { "name": "of Draining", "tier": 5, "ilvl": 80, "stats": ["0.8% of Spell Damage Leeched as Energy Shield during Effect"] }
+      ]
+    },
+    {
+      "label": "increased Critical Strike Chance during Effect",
+      "tags": ["Critical"],
+      "weight": 600,
+      "tiers": [
+        { "name": "of Stinging", "tier": 31, "ilvl": 18, "stats": ["(26—31)% increased Critical Strike Chance during Effect"] },
+        { "name": "of Piercing", "tier": 23, "ilvl": 34, "stats": ["(32—37)% increased Critical Strike Chance during Effect"] },
+        { "name": "of Rupturing", "tier": 16, "ilvl": 50, "stats": ["(38—43)% increased Critical Strike Chance during Effect"] },
+        { "name": "of Penetrating", "tier": 8, "ilvl": 66, "stats": ["(44—49)% increased Critical Strike Chance during Effect"] },
+        { "name": "of Incision", "tier": 3, "ilvl": 82, "stats": ["(50—55)% increased Critical Strike Chance during Effect"] }
+      ]
+    },
+    {
+      "label": "chance to Freeze, Shock and Ignite during Effect",
+      "tags": ["Elemental", "Fire", "Cold", "Lightning", "Ailment"],
+      "weight": 750,
+      "tiers": [
+        { "name": "of Foisting", "tier": 32, "ilvl": 12, "stats": ["(19—22)% chance to Freeze, Shock and Ignite during Effect"] },
+        { "name": "of Imposing", "tier": 24, "ilvl": 32, "stats": ["(23—26)% chance to Freeze, Shock and Ignite during Effect"] },
+        { "name": "of Wreaking", "tier": 15, "ilvl": 52, "stats": ["(27—30)% chance to Freeze, Shock and Ignite during Effect"] },
+        { "name": "of Infliction", "tier": 7, "ilvl": 72, "stats": ["(31—34)% chance to Freeze, Shock and Ignite during Effect"] }
+      ]
+    },
+    {
+      "label": "Chance to Avoid being Stunned during Effect",
+      "tags": [],
+      "weight": 600,
+      "tiers": [
+        { "name": "of Composure", "tier": 32, "ilvl": 12, "stats": ["(31—35)% Chance to Avoid being Stunned during Effect"] },
+        { "name": "of Surefootedness", "tier": 25, "ilvl": 29, "stats": ["(36—40)% Chance to Avoid being Stunned during Effect"] },
+        { "name": "of Persistence", "tier": 17, "ilvl": 46, "stats": ["(41—45)% Chance to Avoid being Stunned during Effect"] },
+        { "name": "of Relentlessness", "tier": 10, "ilvl": 63, "stats": ["(46—50)% Chance to Avoid being Stunned during Effect"] },
+        { "name": "of Tenaciousness", "tier": 5, "ilvl": 80, "stats": ["(51—55)% Chance to Avoid being Stunned during Effect"] }
+      ]
+    },
+    {
+      "label": "reduced Effect of Chill / reduced Freeze Duration on you during Effect",
+      "tags": [],
+      "weight": 600,
+      "tiers": [
+        { "name": "of the Rabbit", "tier": 37, "ilvl": 4, "stats": ["(36—41)% reduced Effect of Chill on you during Effect", "(36—41)% reduced Freeze Duration on you during Effect"] },
+        { "name": "of the Cat", "tier": 28, "ilvl": 23, "stats": ["(42—47)% reduced Effect of Chill on you during Effect", "(42—47)% reduced Freeze Duration on you during Effect"] },
+        { "name": "of the Fox", "tier": 19, "ilvl": 42, "stats": ["(48—52)% reduced Effect of Chill on you during Effect", "(48—52)% reduced Freeze Duration on you during Effect"] },
+        { "name": "of the Sable", "tier": 11, "ilvl": 61, "stats": ["(52—59)% reduced Effect of Chill on you during Effect", "(52—59)% reduced Freeze Duration on you during Effect"] },
+        { "name": "of the Bear", "tier": 5, "ilvl": 80, "stats": ["(60—65)% reduced Effect of Chill on you during Effect", "(60—65)% reduced Freeze Duration on you during Effect"] }
+      ]
+    },
+    {
+      "label": "reduced Effect of Shock on you during Effect",
+      "tags": [],
+      "weight": 600,
+      "tiers": [
+        { "name": "of the Plover", "tier": 35, "ilvl": 6, "stats": ["(36—41)% reduced Effect of Shock on you during Effect"] },
+        { "name": "of the Sandpiper", "tier": 27, "ilvl": 25, "stats": ["(42—47)% reduced Effect of Shock on you during Effect"] },
+        { "name": "of the Cormorant", "tier": 18, "ilvl": 44, "stats": ["(48—52)% reduced Effect of Shock on you during Effect"] },
+        { "name": "of the Sanderling", "tier": 10, "ilvl": 63, "stats": ["(52—59)% reduced Effect of Shock on you during Effect"] },
+        { "name": "of the Heron", "tier": 3, "ilvl": 82, "stats": ["(60—65)% reduced Effect of Shock on you during Effect"] }
+      ]
+    },
+    {
+      "label": "reduced Effect of Curses on you during Effect",
+      "tags": [],
+      "weight": 600,
+      "tiers": [
+        { "name": "of the Petrel", "tier": 34, "ilvl": 8, "stats": ["(36—41)% reduced Effect of Curses on you during Effect"] },
+        { "name": "of the Mockingbird", "tier": 26, "ilvl": 27, "stats": ["(42—47)% reduced Effect of Curses on you during Effect"] },
+        { "name": "of the Curlew", "tier": 17, "ilvl": 46, "stats": ["(48—52)% reduced Effect of Curses on you during Effect"] },
+        { "name": "of the Kakapo", "tier": 9, "ilvl": 65, "stats": ["(52—59)% reduced Effect of Curses on you during Effect"] },
+        { "name": "of the Owl", "tier": 2, "ilvl": 84, "stats": ["(60—65)% reduced Effect of Curses on you during Effect"] }
+      ]
+    },
+    {
+      "label": "chance to Avoid being Chilled / Frozen during Effect",
+      "tags": [],
+      "weight": 600,
+      "tiers": [
+        { "name": "of the Orca", "tier": 37, "ilvl": 4, "stats": ["(31—35)% chance to Avoid being Chilled during Effect", "(31—35)% chance to Avoid being Frozen during Effect"] },
+        { "name": "of the Sea Lion", "tier": 28, "ilvl": 23, "stats": ["(36—40)% chance to Avoid being Chilled during Effect", "(36—40)% chance to Avoid being Frozen during Effect"] },
+        { "name": "of the Narwhal", "tier": 19, "ilvl": 42, "stats": ["(41—45)% chance to Avoid being Chilled during Effect", "(41—45)% chance to Avoid being Frozen during Effect"] },
+        { "name": "of the Beluga", "tier": 11, "ilvl": 61, "stats": ["(46—50)% chance to Avoid being Chilled during Effect", "(46—50)% chance to Avoid being Frozen during Effect"] },
+        { "name": "of the Seal", "tier": 5, "ilvl": 80, "stats": ["(51—55)% chance to Avoid being Chilled during Effect", "(51—55)% chance to Avoid being Frozen during Effect"] }
+      ]
+    },
+    {
+      "label": "chance to Avoid being Ignited during Effect",
+      "tags": [],
+      "weight": 600,
+      "tiers": [
+        { "name": "of the Guppy", "tier": 35, "ilvl": 6, "stats": ["(31—35)% chance to Avoid being Ignited during Effect"] },
+        { "name": "of the Goldfish", "tier": 27, "ilvl": 25, "stats": ["(36—40)% chance to Avoid being Ignited during Effect"] },
+        { "name": "of the Carp", "tier": 18, "ilvl": 44, "stats": ["(41—45)% chance to Avoid being Ignited during Effect"] },
+        { "name": "of the Catfish", "tier": 10, "ilvl": 63, "stats": ["(46—50)% chance to Avoid being Ignited during Effect"] },
+        { "name": "of the Sunfish", "tier": 3, "ilvl": 82, "stats": ["(51—55)% chance to Avoid being Ignited during Effect"] }
+      ]
+    },
+    {
+      "label": "chance to Avoid being Shocked during Effect",
+      "tags": [],
+      "weight": 600,
+      "tiers": [
+        { "name": "of Tree Moss", "tier": 35, "ilvl": 6, "stats": ["(31—35)% chance to Avoid being Shocked during Effect"] },
+        { "name": "of Turf Moss", "tier": 27, "ilvl": 25, "stats": ["(36—40)% chance to Avoid being Shocked during Effect"] },
+        { "name": "of Tooth Moss", "tier": 18, "ilvl": 44, "stats": ["(41—45)% chance to Avoid being Shocked during Effect"] },
+        { "name": "of Plume Moss", "tier": 10, "ilvl": 63, "stats": ["(46—50)% chance to Avoid being Shocked during Effect"] },
+        { "name": "of Bog Moss", "tier": 3, "ilvl": 82, "stats": ["(51—55)% chance to Avoid being Shocked during Effect"] }
+      ]
+    },
+    {
+      "label": "Immunity to Poison during Effect",
+      "tags": [],
+      "weight": 1000,
+      "tiers": [
+        { "name": "of the Skunk", "tier": 3, "ilvl": 16, "stats": ["(45—49)% less Duration", "Immunity to Poison during Effect"] },
+        { "name": "of the Hedgehog", "tier": 2, "ilvl": 46, "stats": ["(40—44)% less Duration", "Immunity to Poison during Effect"] },
+        { "name": "of the Opossum", "tier": 1, "ilvl": 76, "stats": ["(35—39)% less Duration", "Immunity to Poison during Effect"] }
+      ]
+    },
+    {
+      "label": "Immunity to Shock during Effect",
+      "tags": [],
+      "weight": 1000,
+      "tiers": [
+        { "name": "of the Conger", "tier": 3, "ilvl": 6, "stats": ["(45—49)% less Duration", "Immunity to Shock during Effect"] },
+        { "name": "of the Moray", "tier": 2, "ilvl": 40, "stats": ["(40—44)% less Duration", "Immunity to Shock during Effect"] },
+        { "name": "of the Eel", "tier": 1, "ilvl": 74, "stats": ["(35—39)% less Duration", "Immunity to Shock during Effect"] }
+      ]
+    },
+    {
+      "label": "Immunity to Freeze and Chill during Effect",
+      "tags": [],
+      "weight": 1000,
+      "tiers": [
+        { "name": "of the Deer", "tier": 3, "ilvl": 4, "stats": ["(45—49)% less Duration", "Immunity to Freeze and Chill during Effect"] },
+        { "name": "of the Walrus", "tier": 2, "ilvl": 38, "stats": ["(40—44)% less Duration", "Immunity to Freeze and Chill during Effect"] },
+        { "name": "of the Penguin", "tier": 1, "ilvl": 72, "stats": ["(35—39)% less Duration", "Immunity to Freeze and Chill during Effect"] }
+      ]
+    },
+    {
+      "label": "Immunity to Ignite during Effect",
+      "tags": [],
+      "weight": 1000,
+      "tiers": [
+        { "name": "of the Urchin", "tier": 3, "ilvl": 6, "stats": ["(45—49)% less Duration", "Immunity to Ignite during Effect", "Removes Burning on use"] },
+        { "name": "of the Mussel", "tier": 2, "ilvl": 40, "stats": ["(40—44)% less Duration", "Immunity to Ignite during Effect", "Removes Burning on use"] },
+        { "name": "of the Starfish", "tier": 1, "ilvl": 74, "stats": ["(35—39)% less Duration", "Immunity to Ignite during Effect", "Removes Burning on use"] }
+      ]
+    },
+    {
+      "label": "Immunity to Bleeding and Corrupted Blood during Effect",
+      "tags": [],
+      "weight": 1000,
+      "tiers": [
+        { "name": "of the Lizard", "tier": 3, "ilvl": 8, "stats": ["(45—49)% less Duration", "Immunity to Bleeding and Corrupted Blood during Effect"] },
+        { "name": "of the Skink", "tier": 2, "ilvl": 42, "stats": ["(40—44)% less Duration", "Immunity to Bleeding and Corrupted Blood during Effect"] },
+        { "name": "of the Iguana", "tier": 1, "ilvl": 76, "stats": ["(35—39)% less Duration", "Immunity to Bleeding and Corrupted Blood during Effect"] }
+      ]
+    }
+  ]
+}
