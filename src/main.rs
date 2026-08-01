@@ -10,7 +10,7 @@ use std::process::Command;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use device::{click, click_right, ctrl_click, move_mouse, FAKE_DEVICE};
+use device::{click, click_right, ctrl_click, ctrl_right_click, move_mouse, FAKE_DEVICE};
 use crate::auto_roll::AutoRollConfig;
 use crate::auto_roll::AutoRollMod;
 use screenshot::{Rect, ScreenshotData};
@@ -185,6 +185,10 @@ fn main() -> anyhow::Result<()> {
         Some("empty") => {
             let settings = SETTINGS.read().clone();
             return empty_inv(&settings);
+        }
+        Some("emptyr") => {
+            let settings = SETTINGS.read().clone();
+            return empty_inv_right(&settings);
         }
         Some("roll") => {
             let file = args.get(1).expect("missing name to roll");
@@ -492,38 +496,59 @@ fn calibrate_stash() -> anyhow::Result<()> {
         .stash_region
         .ok_or_else(|| anyhow::anyhow!("Stash region not set — run: little_oil set-region stash"))?;
 
-    prompt_enter("Open the quad tab. Clear the search box so NOTHING is highlighted.")?;
+    prompt_enter("Open the quad tab.")?;
     std::thread::sleep(std::time::Duration::from_millis(300));
-    let base = snapshot.screenshot()?;
 
-    // Convert stash_region from screen space to frame-pixel space.
-    let (bx, by) = base.from_screen(stash_region.x, stash_region.y).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Stash region starts outside the game window region — re-run set-region window and set-region stash"
-        )
-    })?;
-    let bounds = Rect {
-        x: bx,
-        y: by,
-        width: stash_region.width.min(base.width as u32 - bx),
-        height: stash_region.height.min(base.height as u32 - by),
+    // Each calibration position is captured twice: first with the item in place
+    // and a search that matches NOTHING (nonsense string), then with a search
+    // matching exactly the item. Diffing those two isolates ONLY the search
+    // highlight: the item art is present in both frames (so it cancels out),
+    // and any non-matching items in the stash stay dimmed in both frames (so
+    // they cancel out too). The highlight ring around the cell is the largest
+    // changed region; its bounding box is the cell.
+    let capture_pos = |where_text: &str| -> anyhow::Result<(ScreenshotData, ScreenshotData, Rect, Rect)> {
+        prompt_enter(&format!(
+            "Put the 1×1 item in the {where_text} slot. In the search box type a \
+             nonsense string (e.g. \"zzz\") so NOTHING is highlighted."
+        ))?;
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let base = snapshot.screenshot()?;
+
+        // Convert stash_region from screen space to frame-pixel space.
+        let (bx, by) = base.from_screen(stash_region.x, stash_region.y).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Stash region starts outside the game window region — re-run set-region window and set-region stash"
+            )
+        })?;
+        let bounds = Rect {
+            x: bx,
+            y: by,
+            width: stash_region.width.min(base.width as u32 - bx),
+            height: stash_region.height.min(base.height as u32 - by),
+        };
+
+        prompt_enter(&format!(
+            "Now search the item's exact name so ONLY it is highlighted (keep it in the {where_text} slot)."
+        ))?;
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let cap = snapshot.screenshot()?;
+
+        let clusters = screenshot::diff_clusters(&base, &cap, bounds, 20)?;
+        let cell = clusters
+            .iter()
+            .max_by_key(|r| r.width * r.height)
+            .copied()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No changed pixels in the {where_text} capture — check that the search actually highlights the item"
+                )
+            })?;
+        Ok((base, cap, bounds, cell))
     };
 
-    prompt_enter("Put ONE 1×1 item in the TOP-LEFT slot and search its name so only it is highlighted.")?;
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    let tl = snapshot.screenshot()?;
+    let (base, tl, _bounds, tl_cell) = capture_pos("TOP-LEFT")?;
 
-    let tl_clusters = screenshot::diff_clusters(&base, &tl, bounds, 20)?;
-    let [tl_cell] = tl_clusters.as_slice() else {
-        bail!(
-            "Expected exactly 1 highlighted cell in the top-left capture, found {}. \
-             Make sure only one item matches the search, and that the stash region \
-             covers only the 24x24 grid (not the search box).",
-            tl_clusters.len()
-        );
-    };
-
-    // Derive highlight_color from the tl cluster's bottom boundary row.
+    // Derive highlight_color from the tl cell's bottom boundary row.
     use std::collections::HashMap;
     let mut color_tally: HashMap<u32, u32> = HashMap::new();
     let by_abs = (tl_cell.y + tl_cell.height.saturating_sub(1)) as usize;
@@ -542,33 +567,11 @@ fn calibrate_stash() -> anyhow::Result<()> {
             "Could not determine highlight color — the highlighted cell's bottom edge did not change"
         ))?;
 
-    prompt_enter("Move that item to the BOTTOM-RIGHT slot and search again.")?;
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    let br = snapshot.screenshot()?;
+    let (_base2, _br, _bounds2, br_cell) = capture_pos("BOTTOM-RIGHT")?;
 
-    let br_clusters = screenshot::diff_clusters(&base, &br, bounds, 20)?;
-    let [br_cell] = br_clusters.as_slice() else {
-        bail!(
-            "Expected exactly 1 highlighted cell in the bottom-right capture, found {}. \
-             Make sure only one item matches the search.",
-            br_clusters.len()
-        );
-    };
+    let grid = StashGrid::from_corners(tl_cell, br_cell, highlight_color)?;
 
-    let grid = StashGrid::from_corners(*tl_cell, *br_cell, highlight_color)?;
-
-    prompt_enter("Move that item to any MIDDLE slot and search again.")?;
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    let mid = snapshot.screenshot()?;
-
-    let mid_clusters = screenshot::diff_clusters(&base, &mid, bounds, 20)?;
-    let [mid_cell] = mid_clusters.as_slice() else {
-        bail!(
-            "Expected exactly 1 highlighted cell in the middle capture, found {}. \
-             Make sure only one item matches the search.",
-            mid_clusters.len()
-        );
-    };
+    let (_base3, mid, _bounds3, mid_cell) = capture_pos("any MIDDLE")?;
 
     // Find the (col, row) whose cell_center is nearest the middle cluster's center.
     let (mcx, mcy) = mid_cell.center();
@@ -624,7 +627,36 @@ fn calibrate_stash() -> anyhow::Result<()> {
 
 
 
+/// Click the bottom-middle of the player inventory panel so the game window
+/// receives keyboard focus before any automation starts. Without this, a
+/// terminal-launched command leaves keyboard focus in the terminal, and the
+/// Ctrl the operator holds (or ctrl_click sends) never reaches the game.
+fn focus_game_window() -> anyhow::Result<()> {
+    let region = {
+        let settings = SETTINGS.read();
+        settings
+            .inv_region
+            .or(settings.game_window_region)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No region to click for focus — run: little_oil set-region inventory (or set-region window)"
+                )
+            })?
+    };
+    let sx = region.x + region.width / 2;
+    let sy = region.y + region.height.saturating_sub(2);
+    println!("Focus click at ({sx}, {sy}) — game window should come to the foreground");
+    // Click twice: the first click is often consumed by the compositor just to
+    // hand focus to the window, and the second lands in the now-focused game.
+    click(sx as i32, sy as i32);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    click(sx as i32, sy as i32);
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    Ok(())
+}
 fn stash_copy() -> anyhow::Result<()> {
+    focus_game_window()?;
+
     let settings = SETTINGS.read();
     let grid = match &settings.stash_grid {
         Some(g) => g.clone(),
@@ -658,6 +690,7 @@ fn stash_copy() -> anyhow::Result<()> {
         println!("--------");
     }
     println!("{} unique items, {} cells failed to copy", seen.len(), failed);
+
     Ok(())
 }
 
@@ -686,9 +719,11 @@ fn chance() -> anyhow::Result<()> {
 static HELP: &str = r#"
 help: Show this menu
 version: Print version and exit
+empty: Empty the inventory into the stash (ctrl+left click)
+emptyr: Empty the inventory into the stash (ctrl+right click)
 set-region <inventory|stash|window>: Select and save a screen region
 calibrate-pointer: Measure pointer scale (run once per machine)
-calibrate-stash: Calibrate the 24x24 quad tab grid (4 guided screenshots)
+calibrate-stash: Calibrate the 24x24 quad tab grid (3 positions, base + search capture each)
 stash <click|copy> [times]: Act on highlighted quad-tab cells
 pull <delay>: Change delay for pulling out of quad tab
 push <delay>: Change delay for pushing into tab/trade
@@ -833,7 +868,7 @@ fn reset_inv_colors() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn empty_inv_macro(settings: &Settings, delay: u64) -> anyhow::Result<u32> {
+fn empty_inv_macro(settings: &Settings, delay: u64, clicker: fn(i32, i32)) -> anyhow::Result<u32> {
     let inv_region = settings
         .inv_region
         .ok_or_else(|| anyhow::anyhow!("Inventory region not calibrated — run: little_oil set-region inventory"))?;
@@ -867,7 +902,7 @@ fn empty_inv_macro(settings: &Settings, delay: u64) -> anyhow::Result<u32> {
                 debug!(x, y, "clicking inv");
                 let (px, py) = (probes[1].0 as u32, probes[1].1 as u32);
                 let (sx, sy) = frame.to_screen(px, py);
-                ctrl_click(sx, sy);
+                clicker(sx, sy);
                 clicked += 1;
                 std::thread::sleep(std::time::Duration::from_millis(delay));
             }
@@ -878,8 +913,18 @@ fn empty_inv_macro(settings: &Settings, delay: u64) -> anyhow::Result<u32> {
 }
 
 fn empty_inv(settings: &Settings) -> anyhow::Result<()> {
+    empty_inv_with(settings, ctrl_click)
+}
+
+fn empty_inv_right(settings: &Settings) -> anyhow::Result<()> {
+    empty_inv_with(settings, ctrl_right_click)
+}
+
+fn empty_inv_with(settings: &Settings, clicker: fn(i32, i32)) -> anyhow::Result<()> {
+    focus_game_window()?;
+
     std::thread::sleep(std::time::Duration::from_millis(500));
-    let clicked = empty_inv_macro(&settings, settings.push_delay)?;
+    let clicked = empty_inv_macro(settings, settings.push_delay, clicker)?;
     let note = Command::new("notify-send")
         .args(["-u", "low", "Little Oil", &format!("Inventory cleared: {} items moved", clicked)])
         .spawn();
@@ -892,6 +937,7 @@ fn empty_inv(settings: &Settings) -> anyhow::Result<()> {
 
 
 fn sort_quad(times: u32) -> anyhow::Result<()> {
+    focus_game_window()?;
     std::thread::sleep(std::time::Duration::from_millis(300));
 
     let settings = SETTINGS.read();

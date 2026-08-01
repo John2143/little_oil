@@ -55,3 +55,15 @@ pub fn ctrl_click(x: i32, y: i32) {
     device.click(key_codes::BTN_LEFT).unwrap();
     device.release(key_codes::KEY_LEFTCTRL).unwrap();
 }
+
+/// Ctrl + right click — moves an item while keeping Ctrl held, used by the
+/// `emptyr` command for PoE inventory emptying.
+pub fn ctrl_right_click(x: i32, y: i32) {
+    move_mouse(x, y);
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    let mut device = FAKE_DEVICE.lock();
+    device.press(key_codes::KEY_LEFTCTRL).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    device.click(key_codes::BTN_RIGHT).unwrap();
+    device.release(key_codes::KEY_LEFTCTRL).unwrap();
+}
