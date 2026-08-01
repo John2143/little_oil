@@ -25,7 +25,7 @@ mod screenshot;
 mod platform;
 mod stash_grid;
 
-use stash_grid::{QUAD_COLS, QUAD_ROWS, StashGrid};
+use stash_grid::{CellGrid, MAP_COLS, MAP_ROWS, QUAD_COLS, QUAD_ROWS};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Settings {
@@ -36,6 +36,14 @@ pub struct Settings {
     push_delay: u64,
     #[serde(default = "default_div_delay")]
     div_delay: u64,
+    /// Inter-click settle for the roll macro (auto_roll). Tune down on a fast
+    /// machine; raise if orbs don't get picked up. Set via config.json.
+    #[serde(default = "default_roll_click_delay")]
+    roll_click_delay: u64,
+    /// Settle after applying an orb before re-reading the tooltip. Raise if
+    /// rolls read a stale item text. Set via config.json.
+    #[serde(default = "default_roll_read_delay")]
+    roll_read_delay: u64,
     /// Three probe colors per inventory slot, 60 slots, column-major
     /// (index = col * 5 + row) to match the existing loop order.
     #[serde(default)]
@@ -55,6 +63,13 @@ pub struct Settings {
     pub pointer_scale: Option<f32>,
     #[serde(default)]
     pub stash_grid: Option<stash_grid::StashGrid>,
+    #[serde(default)]
+    pub map_region: Option<ScreenRegion>,
+    #[serde(default)]
+    pub map_grid: Option<stash_grid::MapGrid>,
+    /// Named clickable points (currency slots, filter button, …), screen space.
+    #[serde(default)]
+    pub points: Option<Vec<NamedPoint>>,
 }
 
 impl Settings {
@@ -72,9 +87,24 @@ pub struct ScreenRegion {
     pub height: u32,
 }
 
+impl ScreenRegion {
+    /// Middle of the region, in screen pixels.
+    pub fn center(&self) -> (u32, u32) {
+        (self.x + self.width / 2, self.y + self.height / 2)
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct NamedPoint {
+    pub name: String,
+    pub region: ScreenRegion,
+}
+
 const fn default_pull_delay() -> u64 { 50 }
 const fn default_push_delay() -> u64 { 40 }
 const fn default_div_delay() -> u64 { 100 }
+const fn default_roll_click_delay() -> u64 { 10 }
+const fn default_roll_read_delay() -> u64 { 75 }
 
 
 
@@ -83,6 +113,8 @@ static DEFAULT_SETTINGS: Settings = Settings {
     pull_delay: 50,
     push_delay: 40,
     div_delay: 100,
+    roll_click_delay: 10,
+    roll_read_delay: 75,
     inv_samples: None,
     platform: None,
     inv_region: None,
@@ -90,9 +122,12 @@ static DEFAULT_SETTINGS: Settings = Settings {
     game_window_region: None,
     pointer_scale: Some(1.25),
     stash_grid: None,
+    map_region: None,
+    map_grid: None,
+    points: None,
 };
 
-static SETTINGS: LazyLock<RwLock<Settings>> = LazyLock::new(|| RwLock::new(DEFAULT_SETTINGS.clone()));
+pub static SETTINGS: LazyLock<RwLock<Settings>> = LazyLock::new(|| RwLock::new(DEFAULT_SETTINGS.clone()));
 
 
 /// Returns the path to the config file: $XDG_CONFIG_HOME/little_oil/config.json
@@ -213,6 +248,22 @@ fn main() -> anyhow::Result<()> {
         Some("calibrate-stash") => {
             return calibrate_stash();
         }
+        Some("calibrate-map") => {
+            return calibrate_map();
+        }
+        Some("calibrate-point") => {
+            let name = args.get(1).ok_or_else(|| anyhow::anyhow!("Usage: little_oil calibrate-point <name>"))?;
+            return calibrate_point(name);
+        }
+        Some("calibrate-currency") => {
+            for name in ["transmute", "alt", "annul", "chance", "augment", "regal", "chaos", "scour", "alchemy", "exalt"] {
+                prompt_enter(&format!(
+                    "Open the currency tab if it isn't already. Next point: {name} — press Enter to slurp its slot."
+                ))?;
+                calibrate_point(name)?;
+            }
+            return Ok(());
+        }
         Some("stash") => {
             let mode = args.get(1).map(|x| &**x);
             match mode {
@@ -231,6 +282,24 @@ fn main() -> anyhow::Result<()> {
                     println!("Usage: little_oil stash <click|copy> [times]");
                     println!("  click <times>  Left-click every highlighted cell (hold Ctrl to pull, Shift to identify)");
                     println!("  copy           Hover every highlighted cell and Ctrl+Alt+C it, printing unique items");
+                    return Ok(());
+                }
+            }
+        }
+        Some("click") => {
+            match args.get(1).map(|x| &**x) {
+                Some("map") => {
+                    let col: usize = args.get(2).ok_or_else(|| anyhow::anyhow!("Usage: little_oil click map <col> <row>"))?.parse()?;
+                    let row: usize = args.get(3).ok_or_else(|| anyhow::anyhow!("Usage: little_oil click map <col> <row>"))?.parse()?;
+                    if col >= MAP_COLS || row >= MAP_ROWS {
+                        bail!("map cell ({col}, {row}) out of range — cols 0..{MAP_COLS}, rows 0..{MAP_ROWS}");
+                    }
+                    return click_map_cell(col, row);
+                }
+                Some(name) => return click_point(name),
+                None => {
+                    println!("Usage: little_oil click <name> | click map <col> <row>");
+                    println!("  <name>    A calibrated point: filter, or a currency (chaos, alch, …)");
                     return Ok(());
                 }
             }
@@ -257,8 +326,13 @@ fn main() -> anyhow::Result<()> {
                     SETTINGS.write().game_window_region = Some(r);
                     r
                 }
+                "map" => {
+                    let r = platform.select_region("Select the MAP grid region (the 12x7 map window, not the sub-tab row)")?;
+                    SETTINGS.write().map_region = Some(r);
+                    r
+                }
                 _ => {
-                    eprintln!("Usage: little_oil set-region <inventory|stash|window>");
+                    eprintln!("Usage: little_oil set-region <inventory|stash|window|map>");
                     return Ok(());
                 }
             };
@@ -486,17 +560,18 @@ fn calibrate_pointer() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn calibrate_stash() -> anyhow::Result<()> {
-    let snapshot = { SETTINGS.read().clone() };
-
-    let _game_region = snapshot
-        .game_window_region
-        .ok_or_else(|| anyhow::anyhow!("Game window region not set — run: little_oil set-region window"))?;
-    let stash_region = snapshot
-        .stash_region
-        .ok_or_else(|| anyhow::anyhow!("Stash region not set — run: little_oil set-region stash"))?;
-
-    prompt_enter("Open the quad tab.")?;
+/// Generic grid calibration: capture three cells (TOP-LEFT, BOTTOM-RIGHT, any
+/// MIDDLE), each with a nonsense-search base frame and a real-search capture,
+/// then derive the grid from the two corner cells and validate against the
+/// middle cell. `label`/`noun` drive the prompts; `save` persists the grid.
+fn calibrate_grid<const C: usize, const R: usize>(
+    snapshot: &Settings,
+    region: ScreenRegion,
+    label: &str, // "stash" | "map"
+    noun: &str,  // "item" | "map"
+    save: impl FnOnce(&mut Settings, CellGrid<C, R>),
+) -> anyhow::Result<()> {
+    prompt_enter(&format!("Open the {label} tab."))?;
     std::thread::sleep(std::time::Duration::from_millis(300));
 
     // Each calibration position is captured twice: first with the item in place
@@ -508,27 +583,27 @@ fn calibrate_stash() -> anyhow::Result<()> {
     // changed region; its bounding box is the cell.
     let capture_pos = |where_text: &str| -> anyhow::Result<(ScreenshotData, ScreenshotData, Rect, Rect)> {
         prompt_enter(&format!(
-            "Put the 1×1 item in the {where_text} slot. In the search box type a \
+            "Put the 1×1 {noun} in the {where_text} slot. In the search box type a \
              nonsense string (e.g. \"zzz\") so NOTHING is highlighted."
         ))?;
         std::thread::sleep(std::time::Duration::from_millis(300));
         let base = snapshot.screenshot()?;
 
-        // Convert stash_region from screen space to frame-pixel space.
-        let (bx, by) = base.from_screen(stash_region.x, stash_region.y).ok_or_else(|| {
+        // Convert region from screen space to frame-pixel space.
+        let (bx, by) = base.from_screen(region.x, region.y).ok_or_else(|| {
             anyhow::anyhow!(
-                "Stash region starts outside the game window region — re-run set-region window and set-region stash"
+                "{label} region starts outside the game window region — re-run set-region window and set-region {label}"
             )
         })?;
         let bounds = Rect {
             x: bx,
             y: by,
-            width: stash_region.width.min(base.width as u32 - bx),
-            height: stash_region.height.min(base.height as u32 - by),
+            width: region.width.min(base.width as u32 - bx),
+            height: region.height.min(base.height as u32 - by),
         };
 
         prompt_enter(&format!(
-            "Now search the item's exact name so ONLY it is highlighted (keep it in the {where_text} slot)."
+            "Now search the {noun}'s exact name so ONLY it is highlighted (keep it in the {where_text} slot)."
         ))?;
         std::thread::sleep(std::time::Duration::from_millis(300));
         let cap = snapshot.screenshot()?;
@@ -540,7 +615,7 @@ fn calibrate_stash() -> anyhow::Result<()> {
             .copied()
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "No changed pixels in the {where_text} capture — check that the search actually highlights the item"
+                    "No changed pixels in the {where_text} capture — check that the search actually highlights the {noun}"
                 )
             })?;
         Ok((base, cap, bounds, cell))
@@ -569,7 +644,7 @@ fn calibrate_stash() -> anyhow::Result<()> {
 
     let (_base2, _br, _bounds2, br_cell) = capture_pos("BOTTOM-RIGHT")?;
 
-    let grid = StashGrid::from_corners(tl_cell, br_cell, highlight_color)?;
+    let grid = CellGrid::<C, R>::from_corners(tl_cell, br_cell, highlight_color)?;
 
     let (_base3, mid, _bounds3, mid_cell) = capture_pos("any MIDDLE")?;
 
@@ -578,8 +653,8 @@ fn calibrate_stash() -> anyhow::Result<()> {
     let mut best_col = 0usize;
     let mut best_row = 0usize;
     let mut best_dist = f64::MAX;
-    for col in 0..QUAD_COLS {
-        for row in 0..QUAD_ROWS {
+    for col in 0..C {
+        for row in 0..R {
             let (ccx, ccy) = grid.cell_center(col, row);
             let dx = ccx as f64 - mcx as f64;
             let dy = ccy as f64 - mcy as f64;
@@ -611,17 +686,69 @@ fn calibrate_stash() -> anyhow::Result<()> {
         );
     }
 
+    // Hoist the printed values before the grid is moved into the save closure.
+    let (sx, sy) = base.to_screen(grid.cols[0], grid.rows[0]);
+    let cell_w = grid.cell_w;
+    let cell_h = grid.cell_h;
+    let origin_x = grid.cols[0];
+    let origin_y = grid.rows[0];
+    let highlight = grid.highlight_color;
+
     {
         let mut settings = SETTINGS.write();
-        settings.stash_grid = Some(grid.clone());
+        save(&mut settings, grid);
         save_config(&config_path(), &*settings)?;
     }
 
-    let (sx, sy) = base.to_screen(grid.cols[0], grid.rows[0]);
     println!(
-        "Stash grid calibrated: cell {}x{}, frame-pixel origin ({}, {}) = screen ({}, {}), highlight 0x{:08X}",
-        grid.cell_w, grid.cell_h, grid.cols[0], grid.rows[0], sx, sy, grid.highlight_color
+        "{label} grid calibrated: cell {cell_w}x{cell_h}, frame-pixel origin ({origin_x}, {origin_y}) = screen ({sx}, {sy}), highlight 0x{highlight:08X}"
     );
+    Ok(())
+}
+
+fn calibrate_stash() -> anyhow::Result<()> {
+    let snapshot = { SETTINGS.read().clone() };
+
+    let _game_region = snapshot
+        .game_window_region
+        .ok_or_else(|| anyhow::anyhow!("Game window region not set — run: little_oil set-region window"))?;
+    let stash_region = snapshot
+        .stash_region
+        .ok_or_else(|| anyhow::anyhow!("Stash region not set — run: little_oil set-region stash"))?;
+
+    calibrate_grid::<QUAD_COLS, QUAD_ROWS>(&snapshot, stash_region, "stash", "item",
+        |s, g| s.stash_grid = Some(g))
+}
+
+fn calibrate_map() -> anyhow::Result<()> {
+    let snapshot = { SETTINGS.read().clone() };
+
+    let _game_region = snapshot
+        .game_window_region
+        .ok_or_else(|| anyhow::anyhow!("Game window region not set — run: little_oil set-region window"))?;
+    let map_region = snapshot
+        .map_region
+        .ok_or_else(|| anyhow::anyhow!("Map region not set — run: little_oil set-region map"))?;
+
+    calibrate_grid::<MAP_COLS, MAP_ROWS>(&snapshot, map_region, "map", "map",
+        |s, g| s.map_grid = Some(g))
+}
+
+/// Slurp one box around a named clickable target and upsert it into `points`.
+/// Idempotent: re-running overwrites the entry for the same name. Points are
+/// screen-space, so no screenshot or `set-region` prerequisite.
+fn calibrate_point(name: &str) -> anyhow::Result<()> {
+    let settings = SETTINGS.read();
+    let platform = settings.platform.unwrap_or_else(Platform::detect);
+    drop(settings);
+    let region = platform.select_region(&format!("Slurp a small box around {name}"))?;
+    let mut settings = SETTINGS.write();
+    let mut points = settings.points.take().unwrap_or_default();
+    points.retain(|p| p.name != name);
+    points.push(NamedPoint { name: name.to_string(), region });
+    settings.points = Some(points);
+    save_config(&config_path(), &*settings)?;
+    println!("Point '{name}' saved at ({}, {})", region.x, region.y);
     Ok(())
 }
 
@@ -631,7 +758,7 @@ fn calibrate_stash() -> anyhow::Result<()> {
 /// receives keyboard focus before any automation starts. Without this, a
 /// terminal-launched command leaves keyboard focus in the terminal, and the
 /// Ctrl the operator holds (or ctrl_click sends) never reaches the game.
-fn focus_game_window() -> anyhow::Result<()> {
+pub fn focus_game_window() -> anyhow::Result<()> {
     let region = {
         let settings = SETTINGS.read();
         settings
@@ -652,6 +779,34 @@ fn focus_game_window() -> anyhow::Result<()> {
     std::thread::sleep(std::time::Duration::from_millis(20));
     click(sx as i32, sy as i32);
     std::thread::sleep(std::time::Duration::from_millis(100));
+    Ok(())
+}
+
+/// Click a calibrated named point (currency slot, filter button, …).
+fn click_point(name: &str) -> anyhow::Result<()> {
+    focus_game_window()?;
+    let settings = SETTINGS.read();
+    let point = settings.points.as_ref().and_then(|ps| ps.iter().find(|p| p.name == name))
+        .ok_or_else(|| anyhow::anyhow!("No calibrated point named '{name}' — run: little_oil calibrate-point {name}"))?;
+    let (sx, sy) = point.region.center();
+    drop(settings);
+    click(sx as i32, sy as i32);
+    Ok(())
+}
+
+/// Click cell (col, row) of the calibrated map grid.
+fn click_map_cell(col: usize, row: usize) -> anyhow::Result<()> {
+    focus_game_window()?;
+    let settings = SETTINGS.read();
+    let grid = match &settings.map_grid {
+        Some(g) => g.clone(),
+        None => bail!("Map grid not calibrated — run: little_oil calibrate-map"),
+    };
+    let frame = settings.screenshot()?;
+    drop(settings);
+    let (px, py) = grid.cell_center(col, row);
+    let (sx, sy) = frame.to_screen(px, py);
+    click(sx, sy);
     Ok(())
 }
 fn stash_copy() -> anyhow::Result<()> {
@@ -721,9 +876,14 @@ help: Show this menu
 version: Print version and exit
 empty: Empty the inventory into the stash (ctrl+left click)
 emptyr: Empty the inventory into the stash (ctrl+right click)
-set-region <inventory|stash|window>: Select and save a screen region
+set-region <inventory|stash|window|map>: Select and save a screen region
 calibrate-pointer: Measure pointer scale (run once per machine)
 calibrate-stash: Calibrate the 24x24 quad tab grid (3 positions, base + search capture each)
+calibrate-map: Calibrate the 12x7 map tab grid (3 positions, base + search capture each)
+calibrate-point <name>: Slurp a small box and save it as a named clickable point
+calibrate-currency: Calibrate the 10 currency slots (transmute, alt, annul, chance, augment, regal, chaos, scour, alchemy, exalt)
+click <name>: Click a calibrated point (e.g. filter, chaos)
+click map <col> <row>: Click a cell in the calibrated map grid
 stash <click|copy> [times]: Act on highlighted quad-tab cells
 pull <delay>: Change delay for pulling out of quad tab
 push <delay>: Change delay for pushing into tab/trade

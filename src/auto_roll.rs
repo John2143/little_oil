@@ -38,11 +38,29 @@ pub struct RollResult {
 
 pub fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
     #![allow(unused_variables)]
-    let alt = (155, 354);
-    let aug = (300, 422);
-    let reg = (572, 354);
-    let slot = (444, 628);
-
+    // Orb/slot positions come from calibrated named points when present
+    // (little_oil calibrate-point alt|augment|regal|slot), falling back to the
+    // historical hardcoded screen coordinates.
+    if let Err(e) = crate::focus_game_window() {
+        println!("{e}");
+        return None;
+    }
+    let points = crate::SETTINGS.read().points.clone().unwrap_or_default();
+    let pos = |names: &[&str], fallback: (i32, i32)| -> (i32, i32) {
+        names
+            .iter()
+            .find_map(|n| points.iter().find(|p| p.name == *n))
+            .map(|p| (p.region.center().0 as i32, p.region.center().1 as i32))
+            .unwrap_or(fallback)
+    };
+    let alt = pos(&["alt"], (155, 354));
+    let aug = pos(&["augment", "aug"], (300, 422));
+    let reg = pos(&["regal"], (572, 354));
+    let slot = pos(&["slot"], (444, 628));
+    let settings = crate::SETTINGS.read();
+    let sleep_click = settings.roll_click_delay;
+    let sleep_read = settings.roll_read_delay;
+    drop(settings);
     let config: AutoRollConfig = {
         match load_config(std::path::Path::new(path), None) {
             Ok(config) => config,
@@ -55,14 +73,11 @@ pub fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
 
     assert!(times > 0);
 
-    let sleep_click = 20;
-    let sleep_read = 150;
-
     let mut i = 0;
     let mut res;
-    println!("rolling!");
+    println!("rolling! (click {sleep_click}ms, read {sleep_read}ms)");
     click(3, 3);
-    std::thread::sleep(std::time::Duration::from_millis(1000));
+    std::thread::sleep(std::time::Duration::from_millis(500));
     loop {
         std::thread::sleep(std::time::Duration::from_millis(sleep_click));
         click_right(alt.0, alt.1);
