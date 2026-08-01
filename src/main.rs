@@ -44,6 +44,13 @@ pub struct Settings {
     /// rolls read a stale item text. Set via config.json.
     #[serde(default = "default_roll_read_delay")]
     roll_read_delay: u64,
+    /// How many clicks focus_game_window sends when grabbing game focus.
+    /// Click-to-focus compositors (Hyprland) consume the first click for focus,
+    /// so the default 2 ensures the second lands in the game. Compositors that
+    /// pass the first click through (some niri setups) would double-grab an
+    /// item — set focus_clicks = 1 there. Set via config.json.
+    #[serde(default = "default_focus_clicks")]
+    focus_clicks: u32,
     /// Three probe colors per inventory slot, 60 slots, column-major
     /// (index = col * 5 + row) to match the existing loop order.
     #[serde(default)]
@@ -105,6 +112,7 @@ const fn default_push_delay() -> u64 { 40 }
 const fn default_div_delay() -> u64 { 100 }
 const fn default_roll_click_delay() -> u64 { 10 }
 const fn default_roll_read_delay() -> u64 { 75 }
+const fn default_focus_clicks() -> u32 { 2 }
 
 
 
@@ -115,6 +123,7 @@ static DEFAULT_SETTINGS: Settings = Settings {
     div_delay: 100,
     roll_click_delay: 10,
     roll_read_delay: 75,
+    focus_clicks: 2,
     inv_samples: None,
     platform: None,
     inv_region: None,
@@ -773,11 +782,16 @@ pub fn focus_game_window() -> anyhow::Result<()> {
     let sx = region.x + region.width / 2;
     let sy = region.y + region.height.saturating_sub(2);
     println!("Focus click at ({sx}, {sy}) — game window should come to the foreground");
-    // Click twice: the first click is often consumed by the compositor just to
-    // hand focus to the window, and the second lands in the now-focused game.
-    click(sx as i32, sy as i32);
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    click(sx as i32, sy as i32);
+    // Click `focus_clicks` times: click-to-focus compositors (Hyprland) consume
+    // the first click just to hand focus to the window, so the second lands in
+    // the now-focused game. Compositors that pass the first click through (some
+    // niri setups) would double-grab an item on the click target — set
+    // focus_clicks = 1 there (config.json).
+    let clicks = { SETTINGS.read().focus_clicks };
+    for _ in 0..clicks {
+        click(sx as i32, sy as i32);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     std::thread::sleep(std::time::Duration::from_millis(100));
     Ok(())
 }
