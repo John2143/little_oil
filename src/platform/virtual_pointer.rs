@@ -13,11 +13,9 @@ use std::io::{self, ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use parking_lot::Mutex;
 
 /// Desktop origin and extents of the global output bounding box.
 #[derive(Debug, Clone, Copy)]
@@ -28,19 +26,17 @@ pub struct Bounds {
     pub height: u32,
 }
 
-struct Conn {
+pub(crate) struct Conn {
     stream: UnixStream,
     pointer: u32,
     bounds: Bounds,
 }
 
-enum State {
+pub(crate) enum VirtualPointer {
     Uninit,
     Ready(Conn),
     Failed,
 }
-
-static VP: LazyLock<Mutex<State>> = LazyLock::new(|| Mutex::new(State::Uninit));
 
 const MANAGER_IFACE: &[u8] = b"zwlr_virtual_pointer_manager_v1";
 
@@ -94,22 +90,38 @@ fn read_event(stream: &mut UnixStream) -> io::Result<(u32, u16, Vec<u8>)> {
     let sizeop = u32::from_le_bytes(header[4..8].try_into().unwrap());
     let size = (sizeop >> 16) as usize;
     let opcode = (sizeop & 0xffff) as u16;
+    if size < 8 {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "short wayland event header",
+        ));
+    }
     let mut payload = vec![0u8; size - 8];
     read_exact(stream, &mut payload)?;
     Ok((obj, opcode, payload))
 }
 
-fn read_u32(payload: &[u8], off: usize) -> u32 {
-    u32::from_le_bytes(payload[off..off + 4].try_into().unwrap())
+fn read_u32(payload: &[u8], off: usize) -> io::Result<u32> {
+    let bytes: [u8; 4] = payload
+        .get(off..off + 4)
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "short payload for u32"))?
+        .try_into()
+        .map_err(|_| io::Error::new(ErrorKind::InvalidData, "short payload for u32"))?;
+    Ok(u32::from_le_bytes(bytes))
 }
 
 /// Read a wayland string at `off`; returns (string, offset past it).
-fn read_string(payload: &[u8], off: usize) -> (String, usize) {
-    let len = u32::from_le_bytes(payload[off..off + 4].try_into().unwrap()) as usize;
+fn read_string(payload: &[u8], off: usize) -> io::Result<(String, usize)> {
+    let len = read_u32(payload, off)? as usize;
     let start = off + 4;
-    let bytes = &payload[start..start + len];
-    let s = String::from_utf8_lossy(&bytes[..len - 1]).to_string();
-    (s, start + len)
+    let end = start
+        .checked_add(len)
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "wayland string length overflow"))?;
+    let bytes = payload.get(start..end).ok_or_else(|| {
+        io::Error::new(ErrorKind::InvalidData, "short payload for wayland string")
+    })?;
+    let s = String::from_utf8_lossy(&bytes[..len.saturating_sub(1)]).to_string();
+    Ok((s, end))
 }
 
 fn connect() -> Result<UnixStream> {
@@ -128,8 +140,8 @@ fn connect() -> Result<UnixStream> {
 ///
 /// niri's virtual-pointer `motion_absolute` takes coordinates relative to the
 /// bounding-box origin with extents equal to the box size, so both the origin
-/// and the extents are needed. On any other compositor this bails and
-/// device.rs falls back to the uinput path.
+/// and the extents are needed. On any other compositor this bails and `App`
+/// falls back to the uinput path.
 fn niri_bounds() -> Result<Bounds> {
     let out = Command::new("niri")
         .args(["msg", "outputs"])
@@ -203,9 +215,9 @@ impl Conn {
             }
             if obj == registry && opcode == 0 {
                 // wl_registry.global: name, interface, version
-                let name = read_u32(&payload, 0);
-                let (iface, off) = read_string(&payload, 4);
-                let _version = read_u32(&payload, off);
+                let name = read_u32(&payload, 0)?;
+                let (iface, off) = read_string(&payload, 4)?;
+                let _version = read_u32(&payload, off)?;
                 if iface.as_bytes() == MANAGER_IFACE {
                     manager_name = Some(name);
                 }
@@ -240,9 +252,9 @@ impl Conn {
             }
             if obj == 1 && opcode == 0 {
                 // wl_display.error
-                let error_obj = read_u32(&payload, 0);
-                let code = read_u32(&payload, 4);
-                let (message, _) = read_string(&payload, 8);
+                let error_obj = read_u32(&payload, 0)?;
+                let code = read_u32(&payload, 4)?;
+                let (message, _) = read_string(&payload, 8)?;
                 bail!("wayland error on object {error_obj} code {code}: {message}");
             }
         }
@@ -314,36 +326,36 @@ impl Conn {
     }
 }
 
-/// Run `f` against the shared virtual pointer, initializing it on first use.
-fn with_conn<F>(f: F) -> Result<()>
-where
-    F: FnOnce(&mut Conn) -> io::Result<()>,
-{
-    let mut state = VP.lock();
-    match &mut *state {
-        State::Ready(conn) => f(conn).map_err(anyhow::Error::from),
-        State::Failed => bail!("virtual pointer unavailable (init failed earlier)"),
-        State::Uninit => {
-            let mut conn = match Conn::init() {
-                Ok(c) => c,
-                Err(e) => {
-                    *state = State::Failed;
-                    return Err(e);
-                }
-            };
-            let res = f(&mut conn).map_err(anyhow::Error::from);
-            *state = State::Ready(conn);
-            res
+impl VirtualPointer {
+    fn with<F>(&mut self, f: F) -> anyhow::Result<()>
+    where
+        F: FnOnce(&mut Conn) -> io::Result<()>,
+    {
+        match self {
+            VirtualPointer::Ready(conn) => f(conn).map_err(anyhow::Error::from),
+            VirtualPointer::Failed => bail!("virtual pointer unavailable (init failed earlier)"),
+            VirtualPointer::Uninit => {
+                let mut conn = match Conn::init() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        *self = VirtualPointer::Failed;
+                        return Err(e);
+                    }
+                };
+                let res = f(&mut conn).map_err(anyhow::Error::from);
+                *self = VirtualPointer::Ready(conn);
+                res
+            }
         }
     }
-}
 
-/// Warp the cursor to an absolute desktop coordinate.
-pub fn move_abs(x: i32, y: i32) -> Result<()> {
-    with_conn(|c| c.move_abs(x, y))
-}
+    /// Warp the cursor to an absolute desktop coordinate.
+    pub(crate) fn move_abs(&mut self, x: i32, y: i32) -> anyhow::Result<()> {
+        self.with(|c| c.move_abs(x, y))
+    }
 
-/// Press or release a wl_pointer button (BTN_LEFT = 0x110, BTN_RIGHT = 0x111).
-pub fn button(button: u32, pressed: bool) -> Result<()> {
-    with_conn(|c| c.button(button, pressed))
+    /// Press or release a wl_pointer button (BTN_LEFT = 0x110, BTN_RIGHT = 0x111).
+    pub(crate) fn button(&mut self, button: u32, pressed: bool) -> anyhow::Result<()> {
+        self.with(|c| c.button(button, pressed))
+    }
 }

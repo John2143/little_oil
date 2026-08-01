@@ -2,9 +2,9 @@
 //! Wayland and Windows are the supported platforms.
 //! X11 exists so the code compiles, but all functions bail at runtime.
 
-use crate::screenshot::ScreenshotData;
 use crate::ScreenRegion;
 use crate::Settings;
+use crate::screenshot::ScreenshotData;
 use anyhow::bail;
 
 pub fn screenshot(_settings: &Settings) -> anyhow::Result<ScreenshotData> {

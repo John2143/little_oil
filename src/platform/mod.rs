@@ -1,13 +1,15 @@
+//! Platform abstraction: screenshot capture and interactive region selection
+//! per display server.
 pub(crate) mod virtual_pointer;
 pub(crate) mod wayland;
-mod x11;
 mod windows;
+mod x11;
 
 // No pub use for inner modules — they export free functions, not types.
 
-use crate::screenshot::ScreenshotData;
 use crate::ScreenRegion;
 use crate::Settings;
+use crate::screenshot::ScreenshotData;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]

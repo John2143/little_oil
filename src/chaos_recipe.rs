@@ -1,3 +1,6 @@
+//! Chaos-recipe bot: query the PoE stash API and click the matching items into
+//! the quad tab.
+use anyhow::bail;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -15,15 +18,6 @@ struct Color {
     r: usize,
     g: usize,
     b: usize,
-}
-
-#[allow(dead_code)]
-#[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-struct StashTabAPIResult {
-    num_tabs: usize,
-    tabs: Vec<StashTab>,
-    items: Vec<Item>,
 }
 
 #[allow(dead_code)]
@@ -93,7 +87,7 @@ struct ItemCount {
     other: usize,
 }
 
-fn check_help(items: &[&'static str], base: &str) -> bool {
+fn check_help(items: &[&str], base: &str) -> bool {
     for item in items {
         if item == &base {
             return true;
@@ -150,8 +144,7 @@ impl Item {
         for prop in props {
             let hasaps = prop
                 .get("name")
-                .map(|name| name.as_str())
-                .flatten()
+                .and_then(|name| name.as_str())
                 .map(|name| name == "Attacks per Second");
 
             if hasaps == Some(true) {
@@ -186,37 +179,46 @@ impl ChaosRecipe {
         )
     }
 
-    #[allow(unused)]
-    fn get_json(&self) -> anyhow::Result<StashAPIResult> {
-        let d = ureq::get(&self.get_url())
+    fn get_json(&self, app: &crate::App) -> anyhow::Result<StashAPIResult> {
+        let resp = ureq::get(&self.get_url())
             .header("Accept", "application/json")
             .header("Cookie", &format!("POESESSID={}", self.session_id))
-            .call();
+            .call()
+            .map_err(|e| anyhow::anyhow!("failed to fetch stash tab from pathofexile.com: {e}"))?;
+        let apir: StashAPIResult = resp
+            .into_body()
+            .read_json()
+            .map_err(|e| anyhow::anyhow!("failed to parse stash tab JSON: {e}"))?;
 
-        //let apir2 = d.unwrap().into_string().unwrap();
-        //dbg!(apir2);
-        //let apir: StashAPIResult = d.unwrap().json().unwrap();
-        let apir: StashAPIResult = todo!();
-
+        let mut index_matched = false;
         for tab in &apir.tabs {
             if Some(tab.i) == self.tab_index {
+                index_matched = true;
                 println!("Chaos recipe tab name is {}", tab.n);
                 println!("Config file name is {}", self.tab_name);
             } else if tab.n == self.tab_name {
                 println!("closest ID is {}, {}", tab.n, tab.i);
-                let mut settings = crate::SETTINGS.write();
-                settings
-                    .chaos_recipe_settings
-                    .as_mut()
-                    .map(|s| s.tab_index = Some(tab.i));
-                crate::save_config(&crate::config_path(), &*settings)?;
+                let mut settings = app.settings.write();
+                if let Some(s) = settings.chaos_recipe_settings.as_mut() {
+                    s.tab_index = Some(tab.i);
+                }
+                crate::save_config(&crate::config_path()?, &*settings)?;
                 println!("writing config {:?}", settings);
 
                 let mut newc = self.clone();
                 newc.tab_index = Some(tab.i);
                 //TODO safety
-                return Ok(newc.get_json()?);
+                return newc.get_json(app);
             }
+        }
+
+        if !index_matched {
+            bail!(
+                "No stash tab named '{}' found — check chaos_recipe_settings (account '{}', league '{}') in config.json",
+                self.tab_name,
+                self.account_name,
+                self.league
+            );
         }
 
         Ok(apir)
@@ -257,7 +259,7 @@ impl StashAPIResult {
                 continue;
             }
 
-            if ty == ItemType::Weapon && il.weapon2.is_none() && il.weapon1.unwrap().h <= 3 {
+            if ty == ItemType::Weapon && il.weapon2.is_none() && item.h <= 3 {
                 il.weapon2 = Some(item);
                 continue;
             }
@@ -338,11 +340,10 @@ impl StashAPIResult {
     }
 }
 
-
 impl ItemList<'_> {
-    fn take(&self) {
+    fn take(&self, app: &crate::App) {
         let (delay, grid, frame) = {
-            let settings = crate::SETTINGS.read();
+            let settings = app.settings.read();
             let grid = match &settings.stash_grid {
                 Some(g) => g.clone(),
                 None => {
@@ -365,8 +366,8 @@ impl ItemList<'_> {
                 return;
             }
             let (px, py) = grid.cell_center(x, y);
-            let (sx, sy) = frame.to_screen(px, py);
-            crate::click(sx, sy);
+            let (sx, sy) = frame.frame_to_screen(px, py);
+            app.click(sx, sy);
             std::thread::sleep(std::time::Duration::from_millis(delay + 10));
         };
 
@@ -398,22 +399,82 @@ impl ItemList<'_> {
     }
 }
 
-use ureq;
-
-pub fn get_tally(cr_config: &ChaosRecipe) {
-    let apir = cr_config.get_json().unwrap();
+pub fn get_tally(app: &crate::App, cr_config: &ChaosRecipe) -> anyhow::Result<()> {
+    let apir = cr_config.get_json(app)?;
     println!("Total item counts: {:?}", apir.tally());
+    Ok(())
 }
 
-pub fn do_recipe(cr_config: &ChaosRecipe, amt: usize) {
-    let mut apir = cr_config.get_json().unwrap();
+pub fn do_recipe(app: &crate::App, cr_config: &ChaosRecipe, amt: usize) -> anyhow::Result<()> {
+    let mut apir = cr_config.get_json(app)?;
     for _i in 0..amt {
-    #[allow(unused)]
         let item_list = apir.create_item_list();
-        item_list.take();
+        item_list.take(app);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Inline PoE stash-API fixture (no network). Item order matters: the tall
+    /// 2x4 branch comes first so it becomes weapon1, then the 1x3 sword must
+    /// fit the weapon2 slot.
+    const FIXTURE: &str = r#"{
+        "numTabs": 1,
+        "quadLayout": true,
+        "tabs": [],
+        "items": [
+            {"x": 0, "y": 0, "identified": true, "baseType": "Iron Greaves", "ilvl": 1, "name": "", "typeLine": "", "w": 2, "h": 2, "properties": null},
+            {"x": 2, "y": 0, "identified": true, "baseType": "Two-Stone Ring", "ilvl": 1, "name": "", "typeLine": "", "w": 1, "h": 1, "properties": null},
+            {"x": 3, "y": 0, "identified": true, "baseType": "Iron Ring", "ilvl": 1, "name": "", "typeLine": "", "w": 1, "h": 1, "properties": null},
+            {"x": 4, "y": 0, "identified": true, "baseType": "Plate Vest", "ilvl": 1, "name": "", "typeLine": "", "w": 2, "h": 3, "properties": null},
+            {"x": 6, "y": 0, "identified": true, "baseType": "Gnarled Branch", "ilvl": 1, "name": "", "typeLine": "", "w": 2, "h": 4, "properties": [{"name": "Attacks per Second"}]},
+            {"x": 8, "y": 0, "identified": true, "baseType": "Rusted Sword", "ilvl": 1, "name": "", "typeLine": "", "w": 1, "h": 3, "properties": [{"name": "Attacks per Second"}]}
+        ]
+    }"#;
+
+    fn fixture() -> StashAPIResult {
+        serde_json::from_str(FIXTURE).unwrap()
+    }
+
+    #[test]
+    fn tally_counts_by_category() {
+        let ic = fixture().tally();
+        assert_eq!(ic.boots, 1);
+        assert_eq!(ic.ring, 2);
+        assert_eq!(ic.body, 1);
+        assert_eq!(ic.weapon, 2);
+        assert_eq!(ic.other, 0);
+    }
+
+    #[test]
+    fn create_item_list_respects_weapon_height() {
+        let mut apir = fixture();
+        let il = apir.create_item_list();
+        let w2 = il.weapon2.expect("1x3 sword must fit the weapon2 slot");
+        assert_eq!(w2.base_type, "Rusted Sword");
+    }
+
+    #[test]
+    fn second_recipe_pass_picks_different_items() {
+        let mut apir = fixture();
+        assert!(apir.create_item_list().weapon1.is_some());
+        // Pass 1 marked every fixture item `used`, so pass 2 finds nothing.
+        let second = apir.create_item_list();
+        assert!(second.weapon1.is_none());
+        assert!(second.weapon2.is_none());
+        assert!(second.ring1.is_none());
+        assert!(second.ring2.is_none());
+        assert!(second.amulet.is_none());
+        assert!(second.belt.is_none());
+        assert!(second.gloves.is_none());
+        assert!(second.boots.is_none());
+        assert!(second.helmet.is_none());
+        assert!(second.body.is_none());
     }
 }
-
 //curl 'https://www.pathofexile.com/character-window/get-stash-items
 //?accountName=John2143658709
 //&realm=pc

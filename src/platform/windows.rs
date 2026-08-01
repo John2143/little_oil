@@ -1,6 +1,8 @@
-use crate::screenshot::ScreenshotData;
+//! Stub backend — not implemented; set `platform` manually in config to use,
+//! or don't.
 use crate::ScreenRegion;
 use crate::Settings;
+use crate::screenshot::ScreenshotData;
 use anyhow::bail;
 
 pub fn screenshot(_settings: &Settings) -> anyhow::Result<ScreenshotData> {

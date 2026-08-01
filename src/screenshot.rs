@@ -1,3 +1,5 @@
+//! Screenshot geometry (Rect, ScreenshotData, pixel access, screen↔frame
+//! conversion) and diff-cluster detection.
 pub struct ScreenshotData {
     pub height: usize,
     pub width: usize,
@@ -31,12 +33,12 @@ impl ScreenshotData {
     }
 
     /// Absolute screen coordinate of a frame pixel. Use for click targets.
-    pub fn to_screen(&self, x: u32, y: u32) -> (i32, i32) {
+    pub fn frame_to_screen(&self, x: u32, y: u32) -> (i32, i32) {
         ((self.origin.0 + x) as i32, (self.origin.1 + y) as i32)
     }
 
     /// Frame pixel for an absolute screen coordinate. None if outside the frame.
-    pub fn from_screen(&self, sx: u32, sy: u32) -> Option<(u32, u32)> {
+    pub fn screen_to_frame(&self, sx: u32, sy: u32) -> Option<(u32, u32)> {
         let (ox, oy) = self.origin;
         let (dx, dy) = (sx.checked_sub(ox)?, sy.checked_sub(oy)?);
         if dx as usize >= self.width || dy as usize >= self.height {
@@ -76,13 +78,17 @@ pub fn diff_clusters(
     if base.width != other.width || base.height != other.height {
         bail!(
             "base and other dimensions differ: {}x{} vs {}x{}",
-            base.width, base.height, other.width, other.height
+            base.width,
+            base.height,
+            other.width,
+            other.height
         );
     }
     if base.origin != other.origin {
         bail!(
             "base and other origins differ: {:?} vs {:?}",
-            base.origin, other.origin
+            base.origin,
+            other.origin
         );
     }
 
@@ -110,8 +116,8 @@ pub fn diff_clusters(
 
     for by in 0..bh {
         for bx in 0..bw {
-            let sx = (x0 as usize + bx) as usize;
-            let sy = (y0 as usize + by) as usize;
+            let sx = x0 as usize + bx;
+            let sy = y0 as usize + by;
             if base.get_pixel(sx, sy) == other.get_pixel(sx, sy) {
                 continue;
             }
@@ -191,7 +197,7 @@ pub fn diff_clusters(
     Ok(rects)
 }
 
-fn find(parent: &mut Vec<u32>, mut x: u32) -> u32 {
+fn find(parent: &mut [u32], mut x: u32) -> u32 {
     while parent[x as usize] != x {
         parent[x as usize] = parent[parent[x as usize] as usize];
         x = parent[x as usize];
@@ -199,7 +205,7 @@ fn find(parent: &mut Vec<u32>, mut x: u32) -> u32 {
     x
 }
 
-fn union(parent: &mut Vec<u32>, a: u32, b: u32) -> u32 {
+fn union(parent: &mut [u32], a: u32, b: u32) -> u32 {
     let ra = find(parent, a);
     let rb = find(parent, b);
     if ra != rb {
@@ -259,7 +265,12 @@ mod tests {
             height: 40,
         };
         let clusters = diff_clusters(&base, &other, bounds, 20).unwrap();
-        assert_eq!(clusters.len(), 1, "expected exactly 1 cluster, got: {:?}", clusters);
+        assert_eq!(
+            clusters.len(),
+            1,
+            "expected exactly 1 cluster, got: {:?}",
+            clusters
+        );
         assert_eq!(
             clusters[0],
             Rect {
@@ -301,7 +312,12 @@ mod tests {
             }
         }
 
-        let bounds = Rect { x: 0, y: 0, width: 40, height: 40 };
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 40,
+        };
         let clusters = diff_clusters(&base, &other, bounds, 4).unwrap();
         assert_eq!(
             clusters.len(),
@@ -312,7 +328,12 @@ mod tests {
         // Spans x 5..=20 and y 5..=12.
         assert_eq!(
             clusters[0],
-            Rect { x: 5, y: 5, width: 16, height: 8 }
+            Rect {
+                x: 5,
+                y: 5,
+                width: 16,
+                height: 8
+            }
         );
     }
 
@@ -351,19 +372,19 @@ mod tests {
             origin: (2560, 100),
         };
 
-        // to_screen
-        assert_eq!(frame.to_screen(10, 20), (2570, 120));
+        // frame_to_screen
+        assert_eq!(frame.frame_to_screen(10, 20), (2570, 120));
 
-        // from_screen — inside
-        assert_eq!(frame.from_screen(2570, 120), Some((10, 20)));
+        // screen_to_frame — inside
+        assert_eq!(frame.screen_to_frame(2570, 120), Some((10, 20)));
 
-        // from_screen — left of origin (exercises checked_sub)
-        assert_eq!(frame.from_screen(2000, 120), None);
+        // screen_to_frame — left of origin (exercises checked_sub)
+        assert_eq!(frame.screen_to_frame(2000, 120), None);
 
-        // from_screen — right of frame
-        assert_eq!(frame.from_screen(3000, 120), None);
+        // screen_to_frame — right of frame
+        assert_eq!(frame.screen_to_frame(3000, 120), None);
 
-        // from_screen — below frame
-        assert_eq!(frame.from_screen(2570, 500), None);
+        // screen_to_frame — below frame
+        assert_eq!(frame.screen_to_frame(2570, 500), None);
     }
 }

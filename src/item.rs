@@ -1,3 +1,4 @@
+//! Item tooltip parsing and mod classification for rolling.
 #![allow(dead_code, unused)]
 use std::{fmt::Display, ops::Range};
 
@@ -39,7 +40,7 @@ pub enum ItemName {
     Unique(String),
 }
 
-impl<'a> Display for ItemName {
+impl Display for ItemName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ItemName::Other(name) => write!(f, "?: {name}")?,
@@ -100,32 +101,32 @@ pub struct AffixNameTier<'a> {
 //                      {     Prefix          Modifier    "Phantasm's  "  (Tier:      3        )      —  Defences, Evasion        }
 //                         vvvvvvvvvvvvvvvvv               vvvvvvvvvvvv           vvvvvvvvvvvvv            vvvvvvvvvvv
 const IMR_1: &str = r#"\{ (?P<affix_type>\w+) Modifier (?:"(?P<name>.+)" \(Tier: (?P<tier>\d+)\) )?(?:— (?P<affixes>.*) )?\}"#;
-const ITEM_MOD_LINE_1_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(IMR_1).unwrap());
+static ITEM_MOD_LINE_1_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(IMR_1).unwrap());
 
 const IMR_2: &str = r#"(?P<before>[^\d]*)(?P<value>\d+(?:\.\d+)?)?(?:\((?P<bot_roll>\d+(?:\.\d+)?)-(?P<top_roll>\d+(?:\.\d+)?)\))?(?P<end>.*)"#;
-const ITEM_MOD_LINE_2_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(IMR_2).unwrap());
+static ITEM_MOD_LINE_2_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(IMR_2).unwrap());
 
 const CR: &str = r#"(?P<left>[^:]+):(?P<right>.+)"#;
-const COLON_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(CR).unwrap());
+static COLON_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(CR).unwrap());
 
 enum ItemParseSections {
-    ItemClass,
-    ItemRarity,
-    ItemName,
+    Class,
+    Rarity,
+    Name,
 
-    ItemStats,
+    Stats,
 
-    //ItemRequirements,
-    //ItemSockets,
-    //ItemLevel,
-    ItemMods,
+    //Requirements,
+    //Sockets,
+    //Level,
+    Mods,
 }
 
 impl<'a> Item<'a> {
     fn from_str(source: &'a str) -> anyhow::Result<Self> {
         let span = span!(tracing::Level::DEBUG, "Item Parser");
         let _ = span.enter();
-        let mut cur_parser_state = ItemParseSections::ItemClass;
+        let mut cur_parser_state = ItemParseSections::Class;
 
         let mut item_type = None;
         let mut item_name = String::new();
@@ -138,7 +139,7 @@ impl<'a> Item<'a> {
 
             match cur_parser_state {
                 //First state: What are we looking at?
-                ItemParseSections::ItemClass => {
+                ItemParseSections::Class => {
                     let res = COLON_REGEX
                         .captures(line)
                         .context("should match first line")?;
@@ -153,9 +154,9 @@ impl<'a> Item<'a> {
                     item_type = Some(res.name("right").unwrap());
 
                     debug!(?item_type);
-                    cur_parser_state = ItemParseSections::ItemRarity;
+                    cur_parser_state = ItemParseSections::Rarity;
                 }
-                ItemParseSections::ItemRarity => {
+                ItemParseSections::Rarity => {
                     let res = COLON_REGEX
                         .captures(line)
                         .context("should match first line")?;
@@ -170,12 +171,12 @@ impl<'a> Item<'a> {
                     let _ = Some(res.name("right").unwrap());
 
                     debug!(?item_type);
-                    cur_parser_state = ItemParseSections::ItemName;
+                    cur_parser_state = ItemParseSections::Name;
                 }
-                ItemParseSections::ItemName => {
+                ItemParseSections::Name => {
                     if line == "--------" {
                         trace!("Item line separator");
-                        cur_parser_state = ItemParseSections::ItemStats;
+                        cur_parser_state = ItemParseSections::Stats;
                         continue;
                     }
 
@@ -184,7 +185,7 @@ impl<'a> Item<'a> {
                     }
                     item_name.push_str(line);
                 }
-                ItemParseSections::ItemStats => {
+                ItemParseSections::Stats => {
                     if line == "--------" {
                         trace!("Item line separator");
 
@@ -196,14 +197,14 @@ impl<'a> Item<'a> {
                             .starts_with("{")
                         {
                             debug!("Moving to next state");
-                            cur_parser_state = ItemParseSections::ItemMods;
+                            cur_parser_state = ItemParseSections::Mods;
                             continue;
                         }
                     }
 
                     trace!(line, "Item stat line");
                 }
-                ItemParseSections::ItemMods => {
+                ItemParseSections::Mods => {
                     // If we have a mod line saved, then combine that with the current line.
                     // These two lines make up a single mod. ex:
                     //

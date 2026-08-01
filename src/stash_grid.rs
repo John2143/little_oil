@@ -1,5 +1,7 @@
-use serde::{Deserialize, Serialize};
+//! Calibrated grid geometry (quad 24x24, map 12x7) with search-highlight
+//! probes and detection.
 use crate::screenshot::{Rect, ScreenshotData};
+use serde::{Deserialize, Serialize};
 
 /// Quad tab is 24x24; map tab selection grid is 12x7.
 pub const QUAD_COLS: usize = 24;
@@ -59,14 +61,23 @@ impl<'de, const C: usize, const R: usize> Deserialize<'de> for CellGrid<C, R> {
         let rows: [u32; R] = h.rows.try_into().map_err(|v: Vec<u32>| {
             serde::de::Error::custom(format!("rows: expected {R} entries, got {}", v.len()))
         })?;
-        Ok(CellGrid { cols, rows, cell_w: h.cell_w, cell_h: h.cell_h, highlight_color: h.highlight_color })
+        Ok(CellGrid {
+            cols,
+            rows,
+            cell_w: h.cell_w,
+            cell_h: h.cell_h,
+            highlight_color: h.highlight_color,
+        })
     }
 }
 
 impl<const C: usize, const R: usize> CellGrid<C, R> {
     /// Middle of cell (col, row), in frame-pixel space.
     pub fn cell_center(&self, col: usize, row: usize) -> (u32, u32) {
-        (self.cols[col] + self.cell_w / 2, self.rows[row] + self.cell_h / 2)
+        (
+            self.cols[col] + self.cell_w / 2,
+            self.rows[row] + self.cell_h / 2,
+        )
     }
 
     /// The three detection probes: the cell's bottom boundary row at 25%, 50%
@@ -106,7 +117,8 @@ impl<const C: usize, const R: usize> CellGrid<C, R> {
             anyhow::bail!(
                 "corner cells are not top-left/bottom-right ordered ({:?} vs {:?}) — \
                  the two calibration captures were taken in the wrong order; re-run calibrate-stash",
-                top_left, bottom_right
+                top_left,
+                bottom_right
             );
         }
         let cell_w = top_left.width;
@@ -117,15 +129,16 @@ impl<const C: usize, const R: usize> CellGrid<C, R> {
             anyhow::bail!(
                 "corner item spans more than one cell (cell {}x{} but pitch {:.1}x{:.1}) — \
                  use a 1x1 item for calibration",
-                cell_w, cell_h, pitch_x, pitch_y
+                cell_w,
+                cell_h,
+                pitch_x,
+                pitch_y
             );
         }
-        let cols: [u32; C] = std::array::from_fn(|i| {
-            (top_left.x as f64 + pitch_x * i as f64).round() as u32
-        });
-        let rows: [u32; R] = std::array::from_fn(|i| {
-            (top_left.y as f64 + pitch_y * i as f64).round() as u32
-        });
+        let cols: [u32; C] =
+            std::array::from_fn(|i| (top_left.x as f64 + pitch_x * i as f64).round() as u32);
+        let rows: [u32; R] =
+            std::array::from_fn(|i| (top_left.y as f64 + pitch_y * i as f64).round() as u32);
         Ok(CellGrid {
             cols,
             rows,
@@ -142,18 +155,41 @@ mod tests {
 
     #[test]
     fn test_map_grid_from_corners_passes_1x1() {
-        let tl = Rect { x: 100, y: 100, width: 40, height: 40 };
-        let br = Rect { x: 100 + 40 * 11, y: 100 + 40 * 6, width: 40, height: 40 };
+        let tl = Rect {
+            x: 100,
+            y: 100,
+            width: 40,
+            height: 40,
+        };
+        let br = Rect {
+            x: 100 + 40 * 11,
+            y: 100 + 40 * 6,
+            width: 40,
+            height: 40,
+        };
         let grid = MapGrid::from_corners(tl, br, 0xE7B477FF).unwrap();
         assert_eq!(grid.cols.len(), MAP_COLS);
         assert_eq!(grid.rows.len(), MAP_ROWS);
-        assert_eq!(grid.cell_center(11, 6), (100 + 40 * 11 + 20, 100 + 40 * 6 + 20));
+        assert_eq!(
+            grid.cell_center(11, 6),
+            (100 + 40 * 11 + 20, 100 + 40 * 6 + 20)
+        );
     }
 
     #[test]
     fn test_map_grid_from_corners_bails_on_multi_cell() {
-        let tl = Rect { x: 100, y: 100, width: 80, height: 40 }; // 2 wide
-        let br = Rect { x: 100 + 40 * 11, y: 100 + 40 * 6, width: 40, height: 40 };
+        let tl = Rect {
+            x: 100,
+            y: 100,
+            width: 80,
+            height: 40,
+        }; // 2 wide
+        let br = Rect {
+            x: 100 + 40 * 11,
+            y: 100 + 40 * 6,
+            width: 40,
+            height: 40,
+        };
         assert!(MapGrid::from_corners(tl, br, 0).is_err());
     }
 }

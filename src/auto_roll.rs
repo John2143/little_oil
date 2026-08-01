@@ -1,6 +1,8 @@
+//! Item rolling: apply alt/augment/regal orbs from calibrated points, read the
+//! tooltip, and match mods against a chrome config.
 use serde::{Deserialize, Serialize};
 
-use crate::{click, click_right, load_config, read_item_on_cursor};
+use crate::load_config;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AutoRollMod {
@@ -36,28 +38,19 @@ pub struct RollResult {
     has_mod: bool,
 }
 
-pub fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
-    #![allow(unused_variables)]
+pub fn auto_roll(app: &crate::App, path: &str, times: i64) -> Option<RollResult> {
     // Orb/slot positions come from calibrated named points when present
-    // (little_oil calibrate-point alt|augment|regal|slot), falling back to the
-    // historical hardcoded screen coordinates.
-    if let Err(e) = crate::focus_game_window() {
+    // (`App::point_pos`), falling back to these historical hardcoded screen
+    // coordinates.
+    if let Err(e) = app.focus_game_window() {
         println!("{e}");
         return None;
     }
-    let points = crate::SETTINGS.read().points.clone().unwrap_or_default();
-    let pos = |names: &[&str], fallback: (i32, i32)| -> (i32, i32) {
-        names
-            .iter()
-            .find_map(|n| points.iter().find(|p| p.name == *n))
-            .map(|p| (p.region.center().0 as i32, p.region.center().1 as i32))
-            .unwrap_or(fallback)
-    };
-    let alt = pos(&["alt"], (155, 354));
-    let aug = pos(&["augment", "aug"], (300, 422));
-    let reg = pos(&["regal"], (572, 354));
-    let slot = pos(&["slot"], (444, 628));
-    let settings = crate::SETTINGS.read();
+    let alt = app.point_pos(&["alt"], (155, 354));
+    let aug = app.point_pos(&["augment", "aug"], (300, 422));
+    let reg = app.point_pos(&["regal"], (572, 354));
+    let slot = app.point_pos(&["slot"], (444, 628));
+    let settings = app.settings.read();
     let sleep_click = settings.roll_click_delay;
     let sleep_read = settings.roll_read_delay;
     drop(settings);
@@ -71,22 +64,29 @@ pub fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
         }
     };
 
-    assert!(times > 0);
+    if times <= 0 {
+        println!("times must be a positive number");
+        return None;
+    }
 
     let mut i = 0;
     let mut res;
     println!("rolling! (click {sleep_click}ms, read {sleep_read}ms)");
-    click(3, 3);
+    app.click(3, 3);
     std::thread::sleep(std::time::Duration::from_millis(500));
     loop {
         std::thread::sleep(std::time::Duration::from_millis(sleep_click));
-        click_right(alt.0, alt.1);
+        app.click_right(alt.0, alt.1);
         std::thread::sleep(std::time::Duration::from_millis(sleep_click * 2));
-        click(slot.0, slot.1);
+        app.click(slot.0, slot.1);
         std::thread::sleep(std::time::Duration::from_millis(sleep_read));
 
         println!("alt");
-        let item = read_item_on_cursor();
+        let Some(item) = app.read_item_on_cursor() else {
+            println!("could not read item on cursor — aborting roll");
+            return None;
+        };
+        app.log_roll_item(path, &item);
         res = check_roll(&item, &config);
         if res.has_mod {
             println!("got mod");
@@ -97,12 +97,17 @@ pub fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
         {
             println!("aug");
             std::thread::sleep(std::time::Duration::from_millis(sleep_click));
-            click_right(aug.0, aug.1);
+            app.click_right(aug.0, aug.1);
             std::thread::sleep(std::time::Duration::from_millis(sleep_click));
-            click(slot.0, slot.1);
+            app.click(slot.0, slot.1);
             std::thread::sleep(std::time::Duration::from_millis(sleep_read));
 
-            res = check_roll(&read_item_on_cursor(), &config);
+            let Some(aug_item) = app.read_item_on_cursor() else {
+                println!("could not read item on cursor — aborting roll");
+                return None;
+            };
+            app.log_roll_item(path, &aug_item);
+            res = check_roll(&aug_item, &config);
             if res.has_mod {
                 break;
             }
@@ -121,17 +126,22 @@ pub fn auto_roll(path: &str, times: i64) -> Option<RollResult> {
 
     if res.has_mod && config.auto_aug_regal {
         std::thread::sleep(std::time::Duration::from_millis(sleep_click));
-        click_right(aug.0, aug.1);
+        app.click_right(aug.0, aug.1);
         std::thread::sleep(std::time::Duration::from_millis(sleep_click));
-        click(slot.0, slot.1);
+        app.click(slot.0, slot.1);
 
         std::thread::sleep(std::time::Duration::from_millis(sleep_click));
-        click_right(reg.0, reg.1);
+        app.click_right(reg.0, reg.1);
         std::thread::sleep(std::time::Duration::from_millis(sleep_click));
-        click(slot.0, slot.1);
+        app.click(slot.0, slot.1);
         std::thread::sleep(std::time::Duration::from_millis(sleep_read));
 
-        res = check_roll(&read_item_on_cursor(), &config);
+        let Some(final_item) = app.read_item_on_cursor() else {
+            println!("could not read item on cursor — aborting roll");
+            return None;
+        };
+        app.log_roll_item(path, &final_item);
+        res = check_roll(&final_item, &config);
     }
 
     Some(res)
@@ -151,13 +161,15 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
     //println!("checking roll: {}", item_text);
     //println!("looking for: {}", config.item_name);
 
-
     //dbg!(&item_text.lines().collect::<Vec<_>>()[8..]);
 
     // { Prefix Modifier \"Notable\" (Tier: 1) — Caster, Speed }
     // or
     // { Suffix Modifier \"Notable\" (Tier: 1) }
-    let regex = regex::Regex::new(r#"\{ (Prefix|Suffix) Modifier \"([^\"]*)\" \(Tier: (\d+)\) —? ?([^\}]*)\)?"#).unwrap();
+    let regex = regex::Regex::new(
+        r#"\{ (Prefix|Suffix) Modifier \"([^\"]*)\" \(Tier: (\d+)\) —? ?([^\}]*)\)?"#,
+    )
+    .unwrap();
 
     let mut modlines = vec![];
     let mut cur_mod_line = None;
@@ -187,7 +199,8 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
 
             cur_mod_line = None;
         }
-        if line.starts_with("{") && line.ends_with("}") && !line.starts_with("{ Implicit Modifier") {
+        if line.starts_with("{") && line.ends_with("}") && !line.starts_with("{ Implicit Modifier")
+        {
             cur_mod_line = Some(line);
         }
     }
@@ -209,7 +222,11 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
                 println!("found notable name match: {}", mod_config.name);
                 got_match = true;
             }
-            if modline.full_text.to_lowercase().contains(&mod_config.name.to_lowercase()) {
+            if modline
+                .full_text
+                .to_lowercase()
+                .contains(&mod_config.name.to_lowercase())
+            {
                 println!("found full text match: {}", mod_config.name);
                 got_match = true;
             }
@@ -236,9 +253,28 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
     let suffixes = modlines.iter().filter(|m| !m.is_prefix);
     let prefixes_tiers = prefixes.clone().map(|m| m.tier).collect::<Vec<_>>();
     let suffixes_tiers = suffixes.clone().map(|m| m.tier).collect::<Vec<_>>();
-    println!("Got {} mods. Tiers: {:?} / {:?}", modlines.len(), prefixes_tiers, suffixes_tiers);
-    println!("Prefixes: {}", prefixes.clone().map(|m| m.notable_name.clone()).collect::<Vec<_>>().join(", "));
-    println!("Suffixes: {}", suffixes.clone().map(|m| m.notable_name.clone()).collect::<Vec<_>>().join(", "));
+    println!(
+        "Got {} mods. Tiers: {:?} / {:?}",
+        modlines.len(),
+        prefixes_tiers,
+        suffixes_tiers
+    );
+    println!(
+        "Prefixes: {}",
+        prefixes
+            .clone()
+            .map(|m| m.notable_name.clone())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    println!(
+        "Suffixes: {}",
+        suffixes
+            .clone()
+            .map(|m| m.notable_name.clone())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     //println!("any two t1: {}, any t1: {}", config.any_two_t1, modlines.iter().any(|m| m.tier == 1));
     if modlines.iter().all(|m| m.tier == 1) && modlines.len() == 2 && config.any_two_t1 {
@@ -267,7 +303,8 @@ mod test {
 
     #[test]
     fn test_auto_roll() {
-        auto_roll("test.json", 1);
+        let app = crate::App::new(crate::default_settings()).unwrap();
+        auto_roll(&app, "test.json", 1);
     }
 
     #[test]
@@ -307,12 +344,10 @@ mod test {
 
         let config = AutoRollConfig {
             item_name: "Phantom Mitts".to_string(),
-            mods: vec![
-                AutoRollMod {
-                    name: "of Puhuarte".to_string(),
-                    is_prefix: false,
-                },
-            ],
+            mods: vec![AutoRollMod {
+                name: "of Puhuarte".to_string(),
+                is_prefix: false,
+            }],
             auto_aug_regal: false,
             any_two_t1: false,
             needs_prefix_and_suffix: false,
@@ -350,8 +385,7 @@ mod test {
 
         let config = AutoRollConfig {
             item_name: "Feathered Arrow Quiver".to_string(),
-            mods: vec![
-            ],
+            mods: vec![],
             auto_aug_regal: false,
             any_two_t1: false,
             needs_prefix_and_suffix: false,

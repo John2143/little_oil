@@ -58,3 +58,17 @@ Any other Wayland compositor implementing those protocols should work too.
 4. `little_oil roll <chrome-file> <times>` (or `chrome`/`mchrome` in the REPL)
    for item rolling; `stash click`, `stash copy`, `empty`, `emptyr` for the
    rest.
+## Architecture
+
+`App` (src/app.rs) is the single injected context: it owns the settings
+(`RwLock<Settings>`), the uinput virtual device (`Mutex<VirtualDevice>`), and
+the Wayland virtual-pointer connection (`Mutex<VirtualPointer>`). Every
+command — sorting, copying, calibration, clicking, rolling, the REPL — is a
+method on `App`; there is no process-global mutable state. `main` (src/main.rs)
+only loads config, constructs `App`, and dispatches argv.
+
+Settings live at the config path printed by `little_oil config`
+(`$XDG_CONFIG_HOME/little_oil/config.json`); a missing file is created from
+`default_settings()`. Pointer control uses either absolute positioning via the
+wlr virtual-pointer protocol (niri — no scale needed) or relative uinput
+motion scaled by `pointer_scale` (all other Wayland compositors).
