@@ -249,8 +249,12 @@ fn main() -> anyhow::Result<()> {
             return reset_inv_colors();
         }
         Some("calibrate-pointer") => {
-            if SETTINGS.read().platform.unwrap_or_else(Platform::detect) != Platform::Wayland {
-                bail!("calibrate-pointer is Wayland-only; set pointer_scale manually in config");
+            if SETTINGS.read().platform.unwrap_or_else(Platform::detect) == Platform::Wayland {
+                bail!(
+                    "calibrate-pointer is not needed on Wayland — pointer control uses absolute \
+                     coordinates via the wlr virtual-pointer protocol. Set pointer_scale manually \
+                     in config for X11/Windows only."
+                );
             }
             return calibrate_pointer();
         }
