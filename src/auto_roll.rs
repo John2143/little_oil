@@ -2,6 +2,7 @@
 //! tooltip, and match mods against a chrome config.
 use serde::{Deserialize, Serialize};
 
+use crate::item::{AffixType, Item};
 use crate::load_config;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -147,70 +148,31 @@ pub fn auto_roll(app: &crate::App, path: &str, times: i64) -> Option<RollResult>
     Some(res)
 }
 
-#[derive(Debug)]
-#[allow(unused)]
-pub struct ParsedMod {
-    pub is_prefix: bool,
-    pub notable_name: String,
-    pub tier: i32,
-    pub tags: Vec<String>,
-    pub full_text: String,
-}
-
 fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
-    //println!("checking roll: {}", item_text);
-    //println!("looking for: {}", config.item_name);
-
-    //dbg!(&item_text.lines().collect::<Vec<_>>()[8..]);
-
-    // { Prefix Modifier \"Notable\" (Tier: 1) — Caster, Speed }
-    // or
-    // { Suffix Modifier \"Notable\" (Tier: 1) }
-    let regex = regex::Regex::new(
-        r#"\{ (Prefix|Suffix) Modifier \"([^\"]*)\" \(Tier: (\d+)\) —? ?([^\}]*)\)?"#,
-    )
-    .unwrap();
-
-    let mut modlines = vec![];
-    let mut cur_mod_line = None;
-    for line in item_text.lines() {
-        if let Some(mod_line) = cur_mod_line {
-            let Some(parsed) = regex.captures(mod_line) else {
-                cur_mod_line = None;
-                continue;
+    let item = match Item::from_str(item_text) {
+        Ok(item) => item,
+        Err(e) => {
+            println!("could not parse item tooltip: {e}");
+            return RollResult {
+                has_prefix: false,
+                has_suffix: false,
+                has_mod: false,
             };
-            let is_prefix = &parsed[1] == "Prefix";
-            let notable_name = &parsed[2];
-            let tier = parsed[3].parse::<i32>().unwrap();
-            let tags = parsed
-                .get(4)
-                .map_or("", |m| m.as_str())
-                .split(", ")
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>();
-
-            modlines.push(ParsedMod {
-                is_prefix,
-                notable_name: notable_name.to_string(),
-                tier,
-                tags,
-                full_text: line.to_string(),
-            });
-
-            cur_mod_line = None;
         }
-        if line.starts_with("{") && line.ends_with("}") && !line.starts_with("{ Implicit Modifier")
-        {
-            cur_mod_line = Some(line);
-        }
-    }
+    };
+    let roll_mods: Vec<_> = item
+        .mods
+        .iter()
+        .filter(|m| matches!(m.affix_type, AffixType::Prefix | AffixType::Suffix))
+        .collect();
 
     let mut has_prefix = false; //has any prefix
     let mut has_suffix = false; //has any suffix
     let mut has_mod_prefix = false; //has a matching prefix
     let mut has_mod_suffix = false; //has a matching suffix
-    for modline in &modlines {
-        if modline.is_prefix {
+    for modline in &roll_mods {
+        let is_prefix = modline.affix_type == AffixType::Prefix;
+        if is_prefix {
             has_prefix = true;
         } else {
             has_suffix = true;
@@ -218,7 +180,9 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
 
         for mod_config in &config.mods {
             let mut got_match = false;
-            if modline.notable_name == mod_config.name {
+            if let Some(ant) = &modline.affix_name_tier
+                && ant.name == mod_config.name.as_str()
+            {
                 println!("found notable name match: {}", mod_config.name);
                 got_match = true;
             }
@@ -249,13 +213,23 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
         has_mod = has_mod_prefix && has_mod_suffix;
     }
 
-    let prefixes = modlines.iter().filter(|m| m.is_prefix);
-    let suffixes = modlines.iter().filter(|m| !m.is_prefix);
-    let prefixes_tiers = prefixes.clone().map(|m| m.tier).collect::<Vec<_>>();
-    let suffixes_tiers = suffixes.clone().map(|m| m.tier).collect::<Vec<_>>();
+    let prefixes = roll_mods
+        .iter()
+        .filter(|m| m.affix_type == AffixType::Prefix);
+    let suffixes = roll_mods
+        .iter()
+        .filter(|m| m.affix_type == AffixType::Suffix);
+    let prefixes_tiers = prefixes
+        .clone()
+        .map(|m| m.affix_name_tier.as_ref().map_or(0, |a| a.tier))
+        .collect::<Vec<_>>();
+    let suffixes_tiers = suffixes
+        .clone()
+        .map(|m| m.affix_name_tier.as_ref().map_or(0, |a| a.tier))
+        .collect::<Vec<_>>();
     println!(
         "Got {} mods. Tiers: {:?} / {:?}",
-        modlines.len(),
+        roll_mods.len(),
         prefixes_tiers,
         suffixes_tiers
     );
@@ -263,7 +237,10 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
         "Prefixes: {}",
         prefixes
             .clone()
-            .map(|m| m.notable_name.clone())
+            .map(|m| m
+                .affix_name_tier
+                .as_ref()
+                .map_or_else(String::new, |a| a.name.to_string()))
             .collect::<Vec<_>>()
             .join(", ")
     );
@@ -271,13 +248,20 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
         "Suffixes: {}",
         suffixes
             .clone()
-            .map(|m| m.notable_name.clone())
+            .map(|m| m
+                .affix_name_tier
+                .as_ref()
+                .map_or_else(String::new, |a| a.name.to_string()))
             .collect::<Vec<_>>()
             .join(", ")
     );
 
-    //println!("any two t1: {}, any t1: {}", config.any_two_t1, modlines.iter().any(|m| m.tier == 1));
-    if modlines.iter().all(|m| m.tier == 1) && modlines.len() == 2 && config.any_two_t1 {
+    if config.any_two_t1
+        && roll_mods.len() == 2
+        && roll_mods
+            .iter()
+            .all(|m| m.affix_name_tier.as_ref().is_some_and(|a| a.tier == 1))
+    {
         println!("all mods are t1 and any_two_t1 is enabled");
         has_mod = true;
     }

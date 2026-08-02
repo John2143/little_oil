@@ -19,6 +19,8 @@ pub mod item;
 mod platform;
 mod screenshot;
 mod stash_grid;
+#[cfg(test)]
+mod test_support;
 
 pub use app::App;
 
@@ -27,8 +29,6 @@ pub struct Settings {
     chaos_recipe_settings: Option<chaos_recipe::ChaosRecipe>,
     #[serde(default = "default_pull_delay")]
     pull_delay: u64,
-    #[serde(default = "default_push_delay")]
-    push_delay: u64,
     #[serde(default = "default_div_delay")]
     div_delay: u64,
     /// Inter-click settle for the roll macro (auto_roll). Tune down on a fast
@@ -105,9 +105,6 @@ pub struct NamedPoint {
 const fn default_pull_delay() -> u64 {
     50
 }
-const fn default_push_delay() -> u64 {
-    40
-}
 const fn default_div_delay() -> u64 {
     100
 }
@@ -125,7 +122,6 @@ fn default_settings() -> Settings {
     Settings {
         chaos_recipe_settings: None,
         pull_delay: 50,
-        push_delay: 40,
         div_delay: 100,
         roll_click_delay: 10,
         roll_read_delay: 75,

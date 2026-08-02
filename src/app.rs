@@ -3,6 +3,7 @@
 use anyhow::bail;
 use mouse_keyboard_input::{Button, VirtualDevice, key_codes};
 use parking_lot::{Mutex, RwLock};
+use rand::seq::SliceRandom;
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
 use std::process::Command;
@@ -115,41 +116,24 @@ impl App {
         self.emit_button(key_codes::BTN_RIGHT, false);
     }
 
-    /// Ctrl + left click — required for PoE inventory/stash item movement.
-    pub(crate) fn ctrl_click(&self, x: i32, y: i32) {
+    /// Left click with the minimum settle the input path needs. Used by the
+    /// empty macro, which holds Ctrl across a whole pass and re-verifies each
+    /// pass with a fresh screenshot — a mistimed click is retried, not lost.
+    pub(crate) fn click_fast(&self, x: i32, y: i32) {
         self.move_mouse(x, y);
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        let mut device = self.device.lock();
-        if let Err(e) = device.press(key_codes::KEY_LEFTCTRL) {
-            tracing::error!(?e, "uinput ctrl press failed");
-        }
         std::thread::sleep(std::time::Duration::from_millis(5));
-        drop(device);
         self.emit_button(key_codes::BTN_LEFT, true);
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(5));
         self.emit_button(key_codes::BTN_LEFT, false);
-        if let Err(e) = self.device.lock().release(key_codes::KEY_LEFTCTRL) {
-            tracing::error!(?e, "uinput ctrl release failed");
-        }
     }
 
-    /// Ctrl + right click — moves an item while keeping Ctrl held, used by the
-    /// `emptyr` command for PoE inventory emptying.
-    pub(crate) fn ctrl_right_click(&self, x: i32, y: i32) {
+    /// Right-click variant of [`click_fast`], for `emptyr`.
+    pub(crate) fn click_right_fast(&self, x: i32, y: i32) {
         self.move_mouse(x, y);
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        let mut device = self.device.lock();
-        if let Err(e) = device.press(key_codes::KEY_LEFTCTRL) {
-            tracing::error!(?e, "uinput ctrl press failed");
-        }
         std::thread::sleep(std::time::Duration::from_millis(5));
-        drop(device);
         self.emit_button(key_codes::BTN_RIGHT, true);
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(5));
         self.emit_button(key_codes::BTN_RIGHT, false);
-        if let Err(e) = self.device.lock().release(key_codes::KEY_LEFTCTRL) {
-            tracing::error!(?e, "uinput ctrl release failed");
-        }
     }
 
     /// Resolve a named calibrated point to screen coordinates, falling back to
@@ -545,7 +529,7 @@ impl App {
     /// Click the bottom-middle of the player inventory panel so the game window
     /// receives keyboard focus before any automation starts. Without this, a
     /// terminal-launched command leaves keyboard focus in the terminal, and the
-    /// Ctrl the operator holds (or ctrl_click sends) never reaches the game.
+    /// Ctrl the operator holds (or the empty macro sends) never reaches the game.
     pub(crate) fn focus_game_window(&self) -> anyhow::Result<()> {
         let region = {
             let settings = self.settings.read();
@@ -752,27 +736,17 @@ impl App {
         Ok(())
     }
 
-    fn empty_inv_macro(&self, delay: u64, clicker: fn(&App, i32, i32)) -> anyhow::Result<u32> {
-        let settings = self.settings.read();
-        let inv_region = settings.inv_region.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Inventory region not calibrated — run: little_oil set-region inventory"
-            )
-        })?;
-
-        info!("Emptying inv");
-
-        let frame = settings.screenshot()?;
-
-        let expected = match settings.inv_samples.as_ref() {
-            Some(s) if s.len() == 60 => s,
-            _ => bail!("Inventory colors not calibrated — run: little_oil reset_inv"),
-        };
-        let mut clicked: u32 = 0;
-
+    /// Occupied inventory cells in `frame` — fewer than 2 of 3 probe pixels
+    /// matching the calibrated empty-slot sample — as screen coordinates.
+    fn occupied_inv_cells(
+        frame: &ScreenshotData,
+        inv_region: ScreenRegion,
+        expected: &[[u32; 3]],
+    ) -> anyhow::Result<Vec<(i32, i32)>> {
+        let mut cells = Vec::new();
         for x in 0..12 {
             for y in 0..5 {
-                let probes = Self::inv_probes(&frame, inv_region, x, y).ok_or_else(|| {
+                let probes = Self::inv_probes(frame, inv_region, x, y).ok_or_else(|| {
                     anyhow::anyhow!(
                         "Inventory slot ({x}, {y}) falls outside the game window region — re-run set-region window and set-region inventory"
                     )
@@ -793,35 +767,107 @@ impl App {
                     debug!(x, y, "clicking inv");
                     let (px, py) = (probes[1].0 as u32, probes[1].1 as u32);
                     let (sx, sy) = frame.frame_to_screen(px, py);
-                    clicker(self, sx, sy);
-                    clicked += 1;
-                    std::thread::sleep(std::time::Duration::from_millis(delay));
+                    cells.push((sx, sy));
                 }
             }
         }
+        Ok(cells)
+    }
 
-        Ok(clicked)
+    /// Empty the inventory: screenshot, click every occupied cell fast, then
+    /// re-screenshot and repeat so clicks the game missed get retried. Up to 3
+    /// passes; Ctrl is held for the whole pass so every click is a move.
+    /// Returns (items clicked, cells still occupied after the last pass).
+    fn empty_inv_macro(&self, clicker: fn(&App, i32, i32)) -> anyhow::Result<(u32, u32)> {
+        let settings = self.settings.read();
+        let inv_region = settings.inv_region.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Inventory region not calibrated — run: little_oil set-region inventory"
+            )
+        })?;
+
+        info!("Emptying inv");
+
+        let expected = match settings.inv_samples.as_ref() {
+            Some(s) if s.len() == 60 => s,
+            _ => bail!("Inventory colors not calibrated — run: little_oil reset_inv"),
+        };
+
+        let mut clicked: u32 = 0;
+        let mut remaining: u32 = 0;
+        let mut prev_occupied: u32 = 0;
+        for _pass in 0..3 {
+            let frame = settings.screenshot()?;
+            let mut cells = Self::occupied_inv_cells(&frame, inv_region, expected)?;
+            let occupied = cells.len() as u32;
+            if occupied == 0 {
+                remaining = 0;
+                break;
+            }
+            if occupied == prev_occupied {
+                // The last pass's clicks moved nothing (stash full, game lost
+                // the input) — retrying the same cells again is pointless.
+                remaining = occupied;
+                break;
+            }
+            prev_occupied = occupied;
+            remaining = occupied;
+
+            // Click the occupied cells in a random order so the macro never
+            // produces the same fixed scan pattern twice.
+            cells.shuffle(&mut rand::rng());
+
+            if let Err(e) = self.device.lock().press(key_codes::KEY_LEFTCTRL) {
+                tracing::error!(?e, "uinput ctrl press failed");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            for (sx, sy) in &cells {
+                clicker(self, *sx, *sy);
+                clicked += 1;
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            if let Err(e) = self.device.lock().release(key_codes::KEY_LEFTCTRL) {
+                tracing::error!(?e, "uinput ctrl release failed");
+            }
+            // Give the last item's move a beat before the next screenshot.
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+
+        // If the loop ended while cells were still occupied (the 3rd pass
+        // clicked something, or the stuck-break), count what actually remains
+        // so the notification never claims items were cleared when they weren't.
+        if remaining > 0 {
+            let frame = settings.screenshot()?;
+            remaining = Self::occupied_inv_cells(&frame, inv_region, expected)?.len() as u32;
+        }
+
+        Ok((clicked, remaining))
     }
 
     fn empty_inv(&self) -> anyhow::Result<()> {
-        self.empty_inv_with(App::ctrl_click)
+        self.empty_inv_with(App::click_fast)
     }
 
     fn empty_inv_right(&self) -> anyhow::Result<()> {
-        self.empty_inv_with(App::ctrl_right_click)
+        self.empty_inv_with(App::click_right_fast)
     }
 
     fn empty_inv_with(&self, clicker: fn(&App, i32, i32)) -> anyhow::Result<()> {
         self.focus_game_window()?;
 
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        let clicked = self.empty_inv_macro(self.settings.read().push_delay, clicker)?;
+        // A short beat after the focus click; the macro's screenshots drive
+        // the actual pacing from here.
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let (clicked, remaining) = self.empty_inv_macro(clicker)?;
         let note = Command::new("notify-send")
             .args([
                 "-u",
                 "low",
                 "Little Oil",
-                &format!("Inventory cleared: {} items moved", clicked),
+                &format!(
+                    "Inventory cleared: {} clicked, {} remain",
+                    clicked, remaining
+                ),
             ])
             .spawn();
         if let Err(e) = note {
@@ -1125,7 +1171,6 @@ click <name>: Click a calibrated point (e.g. filter, chaos)
 click map <col> <row>: Click a cell in the calibrated map grid
 stash <click|copy> [times]: Act on highlighted quad-tab cells
 pull <delay>: Change delay for pulling out of quad tab
-push <delay>: Change delay for pushing into tab/trade
 div <delay>: Change delay for div macro
 chrome <file> <times>: Open an auto-roll file, with name <file>, and roll item <times>
 mchrome <file>: Create example chrome file with name <file>. To be used with chrome later.
@@ -1142,12 +1187,11 @@ impl App {
             };
             let (cmd, rest) = split_space(&line);
             match cmd {
-                "pull" | "push" | "div" => match rest.parse::<u64>() {
+                "pull" | "div" => match rest.parse::<u64>() {
                     Ok(x) => {
                         let mut s = self.settings.write();
                         match cmd {
                             "pull" => s.pull_delay = x,
-                            "push" => s.push_delay = x,
                             "div" => s.div_delay = x,
                             _ => unreachable!(),
                         }
