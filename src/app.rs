@@ -526,11 +526,10 @@ impl App {
         Ok(())
     }
 
-    /// Click the bottom-middle of the player inventory panel so the game window
-    /// receives keyboard focus before any automation starts. Without this, a
-    /// terminal-launched command leaves keyboard focus in the terminal, and the
-    /// Ctrl the operator holds (or the empty macro sends) never reaches the game.
-    pub(crate) fn focus_game_window(&self) -> anyhow::Result<()> {
+    /// The screen point we normally click to focus the game: bottom-middle of
+    /// the inventory panel (falling back to the game window). Parking the
+    /// cursor here before screenshots keeps no item hovered in the capture.
+    fn focus_click_point(&self) -> anyhow::Result<(i32, i32)> {
         let region = {
             let settings = self.settings.read();
             settings
@@ -542,8 +541,28 @@ impl App {
                     )
                 })?
         };
-        let sx = region.x + region.width / 2;
-        let sy = region.y + region.height.saturating_sub(2);
+        Ok((
+            (region.x + region.width / 2) as i32,
+            (region.y + region.height.saturating_sub(2)) as i32,
+        ))
+    }
+
+    /// Move the cursor to the focus-click spot and wait a frame, so the next
+    /// screenshot captures no hover highlight from where the cursor was (the
+    /// last clicked slot) and no item is hovered while we probe.
+    fn park_cursor(&self) -> anyhow::Result<()> {
+        let (sx, sy) = self.focus_click_point()?;
+        self.move_mouse(sx, sy);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        Ok(())
+    }
+
+    /// Click the bottom-middle of the player inventory panel so the game window
+    /// receives keyboard focus before any automation starts. Without this, a
+    /// terminal-launched command leaves keyboard focus in the terminal, and the
+    /// Ctrl the operator holds (or the empty macro sends) never reaches the game.
+    pub(crate) fn focus_game_window(&self) -> anyhow::Result<()> {
+        let (sx, sy) = self.focus_click_point()?;
         println!("Focus click at ({sx}, {sy}) — game window should come to the foreground");
         // Click `focus_clicks` times: click-to-focus compositors (Hyprland) consume
         // the first click just to hand focus to the window, so the second lands in
@@ -552,7 +571,7 @@ impl App {
         // focus_clicks = 1 there (config.json).
         let clicks = { self.settings.read().focus_clicks };
         for _ in 0..clicks {
-            self.click(sx as i32, sy as i32);
+            self.click(sx, sy);
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -796,13 +815,42 @@ impl App {
         let mut clicked: u32 = 0;
         let mut remaining: u32 = 0;
         let mut prev_occupied: u32 = 0;
-        for _pass in 0..3 {
+        for pass in 0..3 {
+            // Park the cursor off any item and wait a frame, so no slot is
+            // hovered (and no highlight pollutes the probe pixels).
+            self.park_cursor()?;
             let frame = settings.screenshot()?;
             let mut cells = Self::occupied_inv_cells(&frame, inv_region, expected)?;
             let occupied = cells.len() as u32;
+            info!(pass = pass + 1, occupied, first_cell = ?cells.first(), "empty pass");
             if occupied == 0 {
                 remaining = 0;
+                if pass == 0 {
+                    // First pass detected nothing — dump the frame and the
+                    // probe-vs-sample pixels so we can see what grim captured
+                    // and whether the probes still land on the game window.
+                    let path = std::path::Path::new("/tmp/little_oil_empty_pass1.png");
+                    match frame.save_png(path) {
+                        Ok(()) => info!(?path, "saved pass-1 frame for inspection"),
+                        Err(e) => tracing::error!(?e, "failed to save pass-1 frame"),
+                    }
+                    if let Some(probes) = Self::inv_probes(&frame, inv_region, 0, 0) {
+                        info!(
+                            sample = ?expected[0],
+                            probe = ?frame.try_get_pixel(probes[1].0, probes[1].1),
+                            "pass-1 cell (0,0) probe vs sample"
+                        );
+                    }
+                }
                 break;
+            }
+            if occupied == 60 && pass == 0 {
+                // The whole inventory reads occupied — correct, or the capture
+                // is off (wrong region, black frame from direct scanout).
+                let path = std::path::Path::new("/tmp/little_oil_empty_pass1.png");
+                if let Err(e) = frame.save_png(path) {
+                    tracing::error!(?e, "failed to save pass-1 frame");
+                }
             }
             if occupied == prev_occupied {
                 // The last pass's clicks moved nothing (stash full, game lost
@@ -837,6 +885,9 @@ impl App {
         // clicked something, or the stuck-break), count what actually remains
         // so the notification never claims items were cleared when they weren't.
         if remaining > 0 {
+            // Same park before the recount — the cursor is still over the last
+            // clicked slot.
+            self.park_cursor()?;
             let frame = settings.screenshot()?;
             remaining = Self::occupied_inv_cells(&frame, inv_region, expected)?.len() as u32;
         }
@@ -871,7 +922,7 @@ impl App {
             ])
             .spawn();
         if let Err(e) = note {
-            eprintln!("notify-send failed: {e}");
+            tracing::error!(?e, "notify-send failed");
         }
         Ok(())
     }

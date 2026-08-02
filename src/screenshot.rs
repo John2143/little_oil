@@ -32,6 +32,17 @@ impl ScreenshotData {
         Some(self.get_pixel(x, y))
     }
 
+    /// Write the frame as a PNG. Debug helper for inspecting what was captured.
+    pub fn save_png(&self, path: &std::path::Path) -> Result<(), image::ImageError> {
+        image::save_buffer(
+            path,
+            &self.pixels,
+            self.width as u32,
+            self.height as u32,
+            image::ColorType::Rgba8,
+        )
+    }
+
     /// Absolute screen coordinate of a frame pixel. Use for click targets.
     pub fn frame_to_screen(&self, x: u32, y: u32) -> (i32, i32) {
         ((self.origin.0 + x) as i32, (self.origin.1 + y) as i32)
