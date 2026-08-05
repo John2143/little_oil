@@ -62,6 +62,7 @@ pub fn screenshot(settings: &Settings) -> anyhow::Result<ScreenshotData> {
 }
 
 /// Capture every output, composited, with the cursor drawn. Origin is (0,0).
+#[cfg(target_os = "linux")]
 pub fn capture_all_with_cursor() -> anyhow::Result<ScreenshotData> {
     let img = grim_capture(None, true)?;
     Ok(ScreenshotData {

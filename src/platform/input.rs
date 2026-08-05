@@ -106,13 +106,12 @@ impl Input {
         }
         #[cfg(target_os = "windows")]
         {
+            let _ = (pointer_scale, platform);
             // SetCursorPos takes physical-pixel screen coordinates directly.
-            // SAFETY: SetCursorPos is always available on Windows.
+            // SAFETY: pointer-move is always available on Windows.
             unsafe {
-                extern "system" {
-                    fn SetCursorPos(x: i32, y: i32) -> i32;
-                }
-                SetCursorPos(x, y);
+                use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
+                let _ = SetCursorPos(x, y);
             }
             // A tiny settle beat mirrors the Linux 10ms post-move sleep.
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -162,45 +161,31 @@ impl Input {
         }
         #[cfg(target_os = "windows")]
         unsafe {
-            extern "system" {
-                fn SendInput(c_inputs: u32, p_inputs: *const u8, cb_size: i32) -> u32;
-            }
-            #[repr(C)]
-            struct MouseInput {
-                dx: i32,
-                dy: i32,
-                mouse_data: u32,
-                dw_flags: u32,
-                time: u32,
-                dw_extra_info: usize,
-            }
-            #[repr(C)]
-            struct Input {
-                type_: u32,
-                mi: MouseInput,
-            }
-            let flags = match (btn, pressed) {
-                (InputButton::Left, true) => 0x0002u32,
-                (InputButton::Left, false) => 0x0004u32,
-                (InputButton::Right, true) => 0x0008u32,
-                (InputButton::Right, false) => 0x0010u32,
+            let _ = platform;
+            use windows::Win32::UI::Input::KeyboardAndMouse::{
+                INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+                MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEINPUT, SendInput,
             };
-            let inp = Input {
-                type_: 0, // INPUT_MOUSE
-                mi: MouseInput {
-                    dx: 0,
-                    dy: 0,
-                    mouse_data: 0,
-                    dw_flags: flags,
-                    time: 0,
-                    dw_extra_info: 0,
+            let flags = match (btn, pressed) {
+                (InputButton::Left, true) => MOUSEEVENTF_LEFTDOWN,
+                (InputButton::Left, false) => MOUSEEVENTF_LEFTUP,
+                (InputButton::Right, true) => MOUSEEVENTF_RIGHTDOWN,
+                (InputButton::Right, false) => MOUSEEVENTF_RIGHTUP,
+            };
+            let inp = INPUT {
+                r#type: INPUT_MOUSE,
+                Anonymous: INPUT_0 {
+                    mi: MOUSEINPUT {
+                        dx: 0,
+                        dy: 0,
+                        mouseData: 0,
+                        dwFlags: flags,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
                 },
             };
-            SendInput(
-                1,
-                &inp as *const _ as *const u8,
-                std::mem::size_of::<Input>() as i32,
-            );
+            SendInput(&[inp], std::mem::size_of::<INPUT>() as i32);
         }
     }
 
@@ -227,45 +212,31 @@ impl Input {
         }
         #[cfg(target_os = "windows")]
         unsafe {
-            extern "system" {
-                fn SendInput(c_inputs: u32, p_inputs: *const u8, cb_size: i32) -> u32;
-                fn MapVirtualKeyW(u_code: u32, u_map_type: u32) -> u32;
-            }
-            #[repr(C)]
-            struct KeyboardInput {
-                w_vk: u16,
-                w_scan: u16,
-                dw_flags: u32,
-                time: u32,
-                dw_extra_info: usize,
-            }
-            #[repr(C)]
-            struct Input {
-                type_: u32,
-                ki: KeyboardInput,
-            }
-            let vk = match key {
-                InputKey::Ctrl => 0x11u32,
-                InputKey::Alt => 0x12u32,
-                InputKey::C => 0x43u32,
+            use windows::Win32::UI::Input::KeyboardAndMouse::{
+                INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
+                SendInput, VK_C, VK_CONTROL, VK_MENU,
             };
-            let scan = MapVirtualKeyW(vk, 0) as u16; // MAPVK_VK_TO_VSC = 0
-            let flags = (scan as u32) << 16 | if pressed { 0x0000 } else { 0x0002 };
-            let inp = Input {
-                type_: 1, // INPUT_KEYBOARD
-                ki: KeyboardInput {
-                    w_vk: 0,
-                    w_scan: scan,
-                    dw_flags: flags,
-                    time: 0,
-                    dw_extra_info: 0,
+            let (vk, flags) = match (key, pressed) {
+                (InputKey::Ctrl, true) => (VK_CONTROL, KEYBD_EVENT_FLAGS(0)),
+                (InputKey::Ctrl, false) => (VK_CONTROL, KEYEVENTF_KEYUP),
+                (InputKey::Alt, true) => (VK_MENU, KEYBD_EVENT_FLAGS(0)),
+                (InputKey::Alt, false) => (VK_MENU, KEYEVENTF_KEYUP),
+                (InputKey::C, true) => (VK_C, KEYBD_EVENT_FLAGS(0)),
+                (InputKey::C, false) => (VK_C, KEYEVENTF_KEYUP),
+            };
+            let inp = INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: vk,
+                        wScan: 0,
+                        dwFlags: flags,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
                 },
             };
-            SendInput(
-                1,
-                &inp as *const _ as *const u8,
-                std::mem::size_of::<Input>() as i32,
-            );
+            SendInput(&[inp], std::mem::size_of::<INPUT>() as i32);
         }
     }
 }

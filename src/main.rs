@@ -193,8 +193,9 @@ where
 }
 
 fn main() -> anyhow::Result<()> {
+    #[cfg(target_os = "windows")]
+    crate::platform::windows::set_dpi_awareness();
     tracing_subscriber::fmt::init();
-    tracing::info!("Starting little_oil");
     let mut set = load_config(&config_path()?, Some(&default_settings()))?;
     // Ensure platform is set (auto-detect on first run, or use config value).
     if set.platform.is_none() {

@@ -1059,6 +1059,8 @@ impl App {
                         return Ok(());
                     }
                 };
+                #[cfg(not(target_os = "linux"))]
+                let _ = region;
 
                 save_config(&config_path()?, &*self.settings.read())?;
                 #[cfg(target_os = "linux")]

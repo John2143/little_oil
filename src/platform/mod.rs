@@ -4,10 +4,12 @@ pub(crate) mod input;
 #[cfg(target_os = "linux")]
 pub(crate) mod virtual_pointer;
 pub(crate) mod wayland;
-mod windows;
+#[cfg(target_os = "windows")]
+pub(crate) mod windows;
 mod x11;
 
 pub(crate) use input::{Input, InputButton, InputKey};
+#[cfg(target_os = "linux")]
 use std::io::Read;
 
 use crate::ScreenRegion;
@@ -40,7 +42,12 @@ impl Platform {
         match self {
             Platform::Wayland => wayland::screenshot(settings),
             Platform::X11 => x11::screenshot(settings),
+            #[cfg(target_os = "windows")]
             Platform::Windows => windows::screenshot(settings),
+            #[cfg(not(target_os = "windows"))]
+            Platform::Windows => {
+                anyhow::bail!("the Windows backend is only built on Windows")
+            }
         }
     }
 
@@ -48,7 +55,12 @@ impl Platform {
         match self {
             Platform::Wayland => wayland::select_region(prompt),
             Platform::X11 => x11::select_region(prompt),
+            #[cfg(target_os = "windows")]
             Platform::Windows => windows::select_region(prompt),
+            #[cfg(not(target_os = "windows"))]
+            Platform::Windows => {
+                anyhow::bail!("the Windows backend is only built on Windows")
+            }
         }
     }
 
@@ -62,8 +74,7 @@ impl Platform {
         }
         #[cfg(target_os = "windows")]
         {
-            // stub — implemented in Phase 2 with WGC full-screen capture
-            anyhow::bail!("capture_all: Windows full-screen capture not yet implemented")
+            windows::capture_all()
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         anyhow::bail!("capture_all: unsupported platform")
@@ -96,7 +107,7 @@ impl Platform {
         }
         #[cfg(target_os = "windows")]
         {
-            // stub — Phase 2
+            windows::clear_clipboard()?;
         }
         Ok(())
     }
@@ -135,8 +146,7 @@ impl Platform {
         }
         #[cfg(target_os = "windows")]
         {
-            // stub — Phase 2
-            None
+            windows::read_clipboard_text()
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         None
