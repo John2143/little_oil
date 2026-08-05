@@ -1,18 +1,17 @@
 //! The injected `App` context and every command: pointer/keyboard device ops,
 //! screenshots, calibration, stash/map/currency clicking, rolling, and the REPL.
+use crate::platform::{Input, InputButton, InputKey, Platform};
 use anyhow::bail;
-use mouse_keyboard_input::{Button, VirtualDevice, key_codes};
 use parking_lot::{Mutex, RwLock};
 use rand::seq::SliceRandom;
-use std::io::{self, BufRead, Read, Write};
+use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
-use tracing::{debug, info, trace};
+use tracing::{debug, info};
 
 use crate::auto_roll::{self, AutoRollConfig, AutoRollMod};
 use crate::chaos_recipe;
-use crate::platform::{Platform, virtual_pointer::VirtualPointer};
 use crate::screenshot::{Rect, ScreenshotData};
 use crate::stash_grid::{CellGrid, MAP_COLS, MAP_ROWS, QUAD_COLS, QUAD_ROWS};
 use crate::{NamedPoint, ScreenRegion, Settings, config_path, save_config};
@@ -28,92 +27,66 @@ pub struct App {
     /// `auto_roll`/`chaos_recipe` can read the (crate-root-private) `Settings`
     /// fields — see `Settings` in main.rs.
     pub(crate) settings: RwLock<Settings>,
-    device: Mutex<VirtualDevice>,
-    vpointer: Mutex<VirtualPointer>,
+    /// Cross-platform input backend (mouse + keyboard), constructed once.
+    input: Mutex<Input>,
 }
 
 impl App {
     pub(crate) fn new(settings: Settings) -> anyhow::Result<Self> {
-        let mut device = VirtualDevice::default().map_err(|e| {
-            anyhow::anyhow!(
-                "failed to open uinput device — check /dev/uinput exists and your user can write to it: {e}"
-            )
-        })?;
-        device
-            .synchronize()
-            .map_err(|e| anyhow::anyhow!("failed to synchronize uinput device: {e}"))?;
+        let platform = settings.platform.unwrap_or_else(Platform::detect);
+        let input = Input::new(platform)?;
         Ok(Self {
             settings: RwLock::new(settings),
-            device: Mutex::new(device),
-            vpointer: Mutex::new(VirtualPointer::Uninit),
+            input: Mutex::new(input),
         })
     }
 
-    /// True when pointer control should go through the Wayland virtual pointer
-    /// (absolute positioning) instead of the uinput relative-motion path.
-    fn wayland_pointer(&self) -> bool {
-        let platform = self.settings.read().platform;
-        matches!(platform, Some(Platform::Wayland)) || (platform.is_none() && !cfg!(windows))
+    /// Read the currently-configured platform (auto-detected on first run).
+    fn platform(&self) -> Platform {
+        self.settings
+            .read()
+            .platform
+            .unwrap_or_else(Platform::detect)
     }
 
+    // ── pointer / keyboard primitives ─────────────────────────────
+
     /// Emit a raw relative pointer move in device units, with no scaling.
-    /// Used by pointer calibration; normal callers want move_mouse.
+    /// Linux only — used by pointer calibration.
+    #[cfg(target_os = "linux")]
     fn move_mouse_raw(&self, dx: i32, dy: i32) {
-        let mut device = self.device.lock();
-        if let Err(e) = device.move_mouse(dx, dy) {
-            tracing::error!(?e, "uinput move_mouse failed");
-        }
+        self.input.lock().move_mouse_raw(dx, dy);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
-    /// Pin the cursor to the desktop origin (0, 0).
+    #[cfg(target_os = "linux")]
     fn pin_cursor_to_origin(&self) {
         self.move_mouse_raw(-50000, -50000);
     }
 
     fn move_mouse(&self, x: i32, y: i32) {
-        if self.wayland_pointer() {
-            if self.vpointer.lock().move_abs(x, y).is_ok() {
-                std::thread::sleep(std::time::Duration::from_millis(10));
-                return;
-            }
-            trace!(x, y, "virtual pointer failed; falling back to uinput");
-        }
         let scale = self.settings.read().pointer_scale.unwrap_or(1.25);
-        trace!(x, y, scale, "mouse_move");
-        self.pin_cursor_to_origin();
-        self.move_mouse_raw((x as f32 * scale) as i32, (y as f32 * scale) as i32);
+        self.input.lock().move_mouse(x, y, scale, self.platform());
     }
 
-    /// Send a mouse button press/release through whichever pointer path is active.
-    fn emit_button(&self, button: Button, pressed: bool) {
-        if self.wayland_pointer() && self.vpointer.lock().button(button as u32, pressed).is_ok() {
-            return;
-        }
-        let mut device = self.device.lock();
-        if pressed {
-            if let Err(e) = device.press(button) {
-                tracing::error!(?e, "uinput press failed");
-            }
-        } else if let Err(e) = device.release(button) {
-            tracing::error!(?e, "uinput release failed");
-        }
+    fn emit_button(&self, btn: InputButton, pressed: bool) {
+        self.input.lock().button(btn, pressed, self.platform());
     }
 
     pub(crate) fn click(&self, x: i32, y: i32) {
         self.move_mouse(x, y);
         std::thread::sleep(std::time::Duration::from_millis(30));
-        self.emit_button(key_codes::BTN_LEFT, true);
+        self.emit_button(InputButton::Left, true);
         std::thread::sleep(std::time::Duration::from_millis(10));
-        self.emit_button(key_codes::BTN_LEFT, false);
+        self.emit_button(InputButton::Left, false);
     }
 
     pub(crate) fn click_right(&self, x: i32, y: i32) {
         self.move_mouse(x, y);
         std::thread::sleep(std::time::Duration::from_millis(30));
-        self.emit_button(key_codes::BTN_RIGHT, true);
+        self.emit_button(InputButton::Right, true);
         std::thread::sleep(std::time::Duration::from_millis(10));
-        self.emit_button(key_codes::BTN_RIGHT, false);
+        self.emit_button(InputButton::Right, false);
     }
 
     /// Left click with the minimum settle the input path needs. Used by the
@@ -122,18 +95,18 @@ impl App {
     pub(crate) fn click_fast(&self, x: i32, y: i32) {
         self.move_mouse(x, y);
         std::thread::sleep(std::time::Duration::from_millis(5));
-        self.emit_button(key_codes::BTN_LEFT, true);
+        self.emit_button(InputButton::Left, true);
         std::thread::sleep(std::time::Duration::from_millis(5));
-        self.emit_button(key_codes::BTN_LEFT, false);
+        self.emit_button(InputButton::Left, false);
     }
 
     /// Right-click variant of [`click_fast`], for `emptyr`.
     pub(crate) fn click_right_fast(&self, x: i32, y: i32) {
         self.move_mouse(x, y);
         std::thread::sleep(std::time::Duration::from_millis(5));
-        self.emit_button(key_codes::BTN_RIGHT, true);
+        self.emit_button(InputButton::Right, true);
         std::thread::sleep(std::time::Duration::from_millis(5));
-        self.emit_button(key_codes::BTN_RIGHT, false);
+        self.emit_button(InputButton::Right, false);
     }
 
     /// Resolve a named calibrated point to screen coordinates, falling back to
@@ -149,101 +122,68 @@ impl App {
     }
 
     fn try_read_item_on_cursor(&self) -> Option<String> {
-        use wl_clipboard_rs::utils::{PrimarySelectionCheckError, is_primary_selection_supported};
+        let platform = self.platform();
 
-        match is_primary_selection_supported() {
-            Ok(_supported) => {}
-            Err(PrimarySelectionCheckError::NoSeats) => {
-                tracing::warn!("no seats, cannot check for primary selection support");
-                return None;
-            }
-            Err(PrimarySelectionCheckError::MissingProtocol) => {
-                tracing::warn!("data-control protocol not supported");
-                return None;
-            }
-            Err(e) => {
-                tracing::warn!("error checking for primary selection support: {:?}", e);
-                return None;
-            }
+        // On Wayland, primary selection availability gates the whole tooltip
+        // pipeline. On other platforms we try anyway — the regular clipboard
+        // is what the game writes to.
+        #[cfg(target_os = "linux")]
+        if !platform.primary_selection_available() {
+            tracing::warn!("primary selection protocol not available; tooltip read may fail");
         }
 
-        // clear the clipboard
+        // Clear the clipboard so we detect new text from the game.
+        if let Err(e) = platform.clear_clipboard() {
+            tracing::warn!(?e, "failed to clear clipboard");
+            return None;
+        }
+
+        // Send Ctrl+Alt+C — the in-game item-tooltip copy shortcut.
         {
-            use wl_clipboard_rs::copy::{MimeType, Options, Source, copy};
-            let opts = Options::new();
-            if let Err(e) = copy(opts, Source::Bytes([].into()), MimeType::Autodetect) {
-                tracing::warn!(?e, "failed to clear clipboard");
-                return None;
+            let mut input = self.input.lock();
+            input.key(InputKey::Ctrl, true);
+            input.key(InputKey::Alt, true);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            input.key(InputKey::C, true);
+            std::thread::sleep(std::time::Duration::from_millis(rand::random_range(4..25)));
+            input.key(InputKey::C, false);
+            input.key(InputKey::Alt, false);
+            input.key(InputKey::Ctrl, false);
+        }
+
+        // Poll the clipboard for up to ~250ms (50 ticks of 5ms).
+        for _ in 0..50 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            if let Some(text) = platform.read_clipboard_text() {
+                return Some(text);
             }
         }
 
-        let mut i = 0;
-        loop {
+        // Retry up to 5 more times with a random stagger (game lag).
+        for retry in 0..5 {
+            std::thread::sleep(std::time::Duration::from_millis(rand::random_range(1..150)));
             {
-                let mut device = self.device.lock();
-                // press ctrl alt c
-                if let Err(e) = device.press(key_codes::KEY_LEFTCTRL) {
-                    tracing::error!(?e, "uinput ctrl press failed");
-                }
-                if let Err(e) = device.press(key_codes::KEY_LEFTALT) {
-                    tracing::error!(?e, "uinput alt press failed");
-                }
-                std::thread::sleep(std::time::Duration::from_millis(5));
-                if let Err(e) = device.press(key_codes::KEY_C) {
-                    tracing::error!(?e, "uinput c press failed");
-                }
+                let mut input = self.input.lock();
+                input.key(InputKey::Ctrl, true);
+                input.key(InputKey::Alt, true);
+                input.key(InputKey::C, true);
                 std::thread::sleep(std::time::Duration::from_millis(rand::random_range(4..25)));
-                if let Err(e) = device.release(key_codes::KEY_C) {
-                    tracing::error!(?e, "uinput c release failed");
-                }
-                if let Err(e) = device.release(key_codes::KEY_LEFTALT) {
-                    tracing::error!(?e, "uinput alt release failed");
-                }
-                if let Err(e) = device.release(key_codes::KEY_LEFTCTRL) {
-                    tracing::error!(?e, "uinput ctrl release failed");
-                }
+                input.key(InputKey::C, false);
+                input.key(InputKey::Alt, false);
+                input.key(InputKey::Ctrl, false);
             }
-
-            //250 ms total
             for _ in 0..50 {
                 std::thread::sleep(std::time::Duration::from_millis(5));
-
-                use wl_clipboard_rs::paste::{ClipboardType, Error, MimeType, Seat, get_contents};
-
-                match get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Text) {
-                    Ok((mut pipe, _x)) => {
-                        let mut contents = vec![];
-                        if pipe.read_to_end(&mut contents).is_err() {
-                            continue;
-                        }
-                        let clip_res = String::from_utf8_lossy(&contents);
-                        if !clip_res.is_empty() {
-                            return Some(clip_res.to_string());
-                        }
-                    }
-                    Err(Error::NoSeats) => {
-                        tracing::debug!("no seats");
-                    }
-                    Err(Error::ClipboardEmpty) => {
-                        tracing::debug!("empty");
-                    }
-                    Err(Error::NoMimeType) => {
-                        tracing::debug!("no mimetype");
-                    }
-                    Err(e) => {
-                        tracing::debug!("clipboard error: {:?}", e);
-                    }
+                if let Some(text) = platform.read_clipboard_text() {
+                    return Some(text);
                 }
             }
-
-            i += 1;
-            if i > 5 {
+            if retry == 4 {
                 tracing::warn!("clipboard was always empty, giving up");
-                return None;
             }
-
-            std::thread::sleep(std::time::Duration::from_millis(rand::random_range(1..150)));
         }
+
+        None
     }
 
     pub(crate) fn read_item_on_cursor(&self) -> Option<String> {
@@ -264,6 +204,7 @@ impl App {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn calibrate_pointer(&self) -> anyhow::Result<()> {
         const D: i32 = 400; // device units; large enough that the two cursor
         // positions cannot overlap even at max deceleration
@@ -272,11 +213,11 @@ impl App {
 
         self.pin_cursor_to_origin();
         std::thread::sleep(std::time::Duration::from_millis(200));
-        let before = crate::platform::wayland::capture_all_with_cursor()?;
+        let before = self.platform().capture_all()?;
 
         self.move_mouse_raw(D, D);
         std::thread::sleep(std::time::Duration::from_millis(200));
-        let after = crate::platform::wayland::capture_all_with_cursor()?;
+        let after = self.platform().capture_all()?;
 
         let bounds = Rect {
             x: 0,
@@ -865,18 +806,14 @@ impl App {
             // produces the same fixed scan pattern twice.
             cells.shuffle(&mut rand::rng());
 
-            if let Err(e) = self.device.lock().press(key_codes::KEY_LEFTCTRL) {
-                tracing::error!(?e, "uinput ctrl press failed");
-            }
+            self.input.lock().key(InputKey::Ctrl, true);
             std::thread::sleep(std::time::Duration::from_millis(5));
             for (sx, sy) in &cells {
                 clicker(self, *sx, *sy);
                 clicked += 1;
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
-            if let Err(e) = self.device.lock().release(key_codes::KEY_LEFTCTRL) {
-                tracing::error!(?e, "uinput ctrl release failed");
-            }
+            self.input.lock().key(InputKey::Ctrl, false);
             // Give the last item's move a beat before the next screenshot.
             std::thread::sleep(std::time::Duration::from_millis(30));
         }
@@ -991,31 +928,21 @@ impl App {
             }
             Some("reset_inv") => return self.reset_inv_colors(),
             Some("calibrate-pointer") => {
-                // The wlr virtual-pointer path (absolute coordinates, no scale)
-                // only activates on niri (it is gated by `niri msg outputs` in
-                // platform/virtual_pointer.rs). On every other Wayland compositor
-                // — e.g. Hyprland — pointer control still uses the uinput relative
-                // path and pointer_scale still needs calibration.
-                let on_niri = Command::new("niri")
-                    .args(["msg", "outputs"])
-                    .output()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false);
-                if self
-                    .settings
-                    .read()
-                    .platform
-                    .unwrap_or_else(Platform::detect)
-                    == Platform::Wayland
-                    && on_niri
-                {
+                // Platforms with absolute pointer positioning (niri on Linux,
+                // Windows) don't need pointer_scale calibration.
+                if self.platform().uses_absolute_pointer() {
                     bail!(
-                        "calibrate-pointer is not needed on niri — pointer control uses absolute \
-                         coordinates via the wlr virtual-pointer protocol. Set pointer_scale manually \
-                         in config for X11/Windows only."
+                        "calibrate-pointer is not needed on this platform — pointer \
+                         control uses absolute coordinates. Set pointer_scale manually \
+                         in config only if you see coordinate drift."
                     );
                 }
+                #[cfg(target_os = "linux")]
                 return self.calibrate_pointer();
+                #[cfg(not(target_os = "linux"))]
+                bail!(
+                    "calibrate-pointer is not supported on this platform — pointer control uses absolute coordinates."
+                );
             }
             Some("calibrate-stash") => return self.calibrate_stash(),
             Some("calibrate-map") => return self.calibrate_map(),
