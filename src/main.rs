@@ -15,13 +15,13 @@ mod app;
 mod auto_roll;
 mod chaos_recipe;
 mod dicts;
+mod gui;
 pub mod item;
 mod platform;
 mod screenshot;
 mod stash_grid;
 #[cfg(test)]
 mod test_support;
-
 pub use app::App;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -75,7 +75,7 @@ pub struct Settings {
 }
 
 impl Settings {
-    fn screenshot(&self) -> anyhow::Result<ScreenshotData> {
+    pub(crate) fn screenshot(&self) -> anyhow::Result<ScreenshotData> {
         let platform = self.platform.unwrap_or_else(Platform::detect);
         platform.screenshot(self)
     }

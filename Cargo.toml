@@ -7,8 +7,6 @@ edition = "2024"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-#scrap = "0.5.0"
-#inputbot = "0.6.0"
 serde_json = "1.0.149"
 parking_lot = "0.12"
 dirs = "6.0.0"
@@ -17,17 +15,18 @@ rand = "0.10.0"
 regex = "1.12.3"
 once_cell = "1.21.3"
 ureq = { version = "3.2.0", features = ["json"] }
-#mouse-rs = "0.4.2"
 rust_decimal = "1.40.0"
 anyhow = "1.0.102"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 tracing-test = "0.2.6"
 image = "0.25.9"
+# egui GUI (`little_oil gui`); tray + global hotkeys are Windows-only deps below.
+eframe = "0.32"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 mouse-keyboard-input = { rev = "3d53ae6d7430a730908353c1281689f062e4eb0b", git = "https://github.com/John2143/mouse-keyboard-input.git" }
 wl-clipboard-rs = "0.9.3"
-#image = "*"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = [
@@ -49,3 +48,6 @@ windows = { version = "0.62", features = [
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
 ] }
+tray-icon = "0.19"
+muda = "0.15"
+global-hotkey = "0.6"

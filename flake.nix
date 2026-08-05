@@ -17,10 +17,60 @@
           nativeBuildInputs = with pkgs; [ pkg-config ];
           buildInputs = with pkgs; [
             udev
+            # eframe (egui) Linux rendering + wayland/x11 backends
+            fontconfig
+            libGL
+            libxkbcommon
+            wayland
+            libx11
+            libxcb
+            libxcb-util
+            libxcb-cursor
+            libxcb-image
+            libxcb-keysyms
+            libxcb-render-util
+            libxcb-wm
           ];
         };
         devShell = with pkgs; mkShell {
-          buildInputs = [ cargo rustc rustfmt pre-commit rustPackages.clippy pkg-config udev pkg-config bacon rust-analyzer ];
+          buildInputs = [
+            cargo
+            rustc
+            rustfmt
+            pre-commit
+            rustPackages.clippy
+            pkg-config
+            udev
+            bacon
+            rust-analyzer
+            # eframe (egui) Linux rendering + wayland/x11 backends
+            fontconfig
+            libGL
+            libxkbcommon
+            wayland
+            libx11
+            libxcb
+            libxcb-util
+            libxcb-cursor
+            libxcb-image
+            libxcb-keysyms
+            libxcb-render-util
+            libxcb-wm
+          ];
+          LD_LIBRARY_PATH = lib.makeLibraryPath [
+            wayland
+            libxkbcommon
+            fontconfig
+            libGL
+            libx11
+            libxcb
+            libxcb-util
+            libxcb-cursor
+            libxcb-image
+            libxcb-keysyms
+            libxcb-render-util
+            libxcb-wm
+          ];
           RUST_SRC_PATH = rustPlatform.rustLibSrc;
         };
       }

@@ -42,7 +42,7 @@ impl App {
     }
 
     /// Read the currently-configured platform (auto-detected on first run).
-    fn platform(&self) -> Platform {
+    pub(crate) fn platform(&self) -> Platform {
         self.settings
             .read()
             .platform
@@ -623,7 +623,7 @@ impl App {
     /// Three probes across the vertical middle of an inventory slot, at 25%, 50%
     /// and 75% of its width, in frame-pixel space. None if the slot falls outside
     /// the captured frame.
-    fn inv_probes(
+    pub(crate) fn inv_probes(
         frame: &ScreenshotData,
         region: ScreenRegion,
         col: u32,
@@ -646,7 +646,7 @@ impl App {
         ])
     }
 
-    fn reset_inv_colors(&self) -> anyhow::Result<()> {
+    pub(crate) fn reset_inv_colors(&self) -> anyhow::Result<()> {
         let settings = self.settings.read();
         let inv_region = settings.inv_region.ok_or_else(|| {
             anyhow::anyhow!(
@@ -698,7 +698,7 @@ impl App {
 
     /// Occupied inventory cells in `frame` — fewer than 2 of 3 probe pixels
     /// matching the calibrated empty-slot sample — as screen coordinates.
-    fn occupied_inv_cells(
+    pub(crate) fn occupied_inv_cells(
         frame: &ScreenshotData,
         inv_region: ScreenRegion,
         expected: &[[u32; 3]],
@@ -832,11 +832,11 @@ impl App {
         Ok((clicked, remaining))
     }
 
-    fn empty_inv(&self) -> anyhow::Result<()> {
+    pub(crate) fn empty_inv(&self) -> anyhow::Result<()> {
         self.empty_inv_with(App::click_fast)
     }
 
-    fn empty_inv_right(&self) -> anyhow::Result<()> {
+    pub(crate) fn empty_inv_right(&self) -> anyhow::Result<()> {
         self.empty_inv_with(App::click_right_fast)
     }
 
@@ -899,6 +899,10 @@ impl App {
     /// was given (matching the previous behavior of main()).
     pub(crate) fn run(self, args: &[String]) -> anyhow::Result<()> {
         match args.first().map(|x| &**x) {
+            Some("gui") => {
+                let app = Arc::new(self);
+                return crate::gui::run(app);
+            }
             Some("config") => {
                 // Print the ACTIVE config. Calibration is only inspectable this way.
                 println!("{}", serde_json::to_string_pretty(&*self.settings.read())?);
