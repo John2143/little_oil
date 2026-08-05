@@ -133,7 +133,9 @@ impl LittleOilGui {
     /// Run a macro action on a background thread, guarding against overlap.
     fn run_action(&mut self, name: &'static str, f: fn(&App) -> Result<()>) {
         if self.busy.load(Ordering::SeqCst) {
-            self.push(format!("{name}: already busy — wait for the current action"));
+            self.push(format!(
+                "{name}: already busy — wait for the current action"
+            ));
             return;
         }
         self.busy.store(true, Ordering::SeqCst);
@@ -161,13 +163,14 @@ impl LittleOilGui {
                 let (w, h) = (data.width, data.height);
                 let (ox, oy) = data.origin;
                 let size = egui::Vec2::new(w as f32, h as f32);
-                let color = egui::ColorImage::from_rgba_unmultiplied(
-                    [w as usize, h as usize],
-                    &data.pixels,
-                );
+                let color = egui::ColorImage::from_rgba_unmultiplied([w, h], &data.pixels);
                 let texture = ctx.load_texture("capture", color, egui::TextureOptions::NEAREST);
                 let shown = fit_into(size, PREVIEW_AVAIL);
-                self.preview = Some(Preview { data, texture, shown });
+                self.preview = Some(Preview {
+                    data,
+                    texture,
+                    shown,
+                });
                 self.push(format!("captured {w}x{h} (origin {ox}, {oy})"));
             }
             Err(e) => self.push(format!("capture failed: {e:#}")),
@@ -181,11 +184,18 @@ impl LittleOilGui {
             egui::Vec2::new(preview.data.width as f32, preview.data.height as f32),
             PREVIEW_AVAIL,
         );
-        let origin_disp = egui::pos2((PREVIEW_AVAIL.x - shown.x) / 2.0, (PREVIEW_AVAIL.y - shown.y) / 2.0);
+        let origin_disp = egui::pos2(
+            (PREVIEW_AVAIL.x - shown.x) / 2.0,
+            (PREVIEW_AVAIL.y - shown.y) / 2.0,
+        );
         let to_img = |p: egui::Pos2| -> Option<(u32, u32)> {
             let px = (p.x - origin_disp.x) / shown.x * preview.data.width as f32;
             let py = (p.y - origin_disp.y) / shown.y * preview.data.height as f32;
-            if px < 0.0 || py < 0.0 || px > preview.data.width as f32 || py > preview.data.height as f32 {
+            if px < 0.0
+                || py < 0.0
+                || px > preview.data.width as f32
+                || py > preview.data.height as f32
+            {
                 return None;
             }
             Some((px as u32, py as u32))
@@ -224,7 +234,11 @@ impl LittleOilGui {
         match save_config(&path, &settings_snapshot) {
             Ok(()) => self.push(format!(
                 "saved {} region: {}x{} at ({}, {})",
-                target.label(), region.width, region.height, region.x, region.y
+                target.label(),
+                region.width,
+                region.height,
+                region.x,
+                region.y
             )),
             Err(e) => self.push(format!("saved in memory but config write failed: {e:#}")),
         }
@@ -283,10 +297,26 @@ impl LittleOilGui {
             egui::ComboBox::from_id_salt("region_target")
                 .selected_text(self.region_target.label())
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.region_target, RegionTarget::Game, RegionTarget::Game.label());
-                    ui.selectable_value(&mut self.region_target, RegionTarget::Inventory, RegionTarget::Inventory.label());
-                    ui.selectable_value(&mut self.region_target, RegionTarget::Stash, RegionTarget::Stash.label());
-                    ui.selectable_value(&mut self.region_target, RegionTarget::Map, RegionTarget::Map.label());
+                    ui.selectable_value(
+                        &mut self.region_target,
+                        RegionTarget::Game,
+                        RegionTarget::Game.label(),
+                    );
+                    ui.selectable_value(
+                        &mut self.region_target,
+                        RegionTarget::Inventory,
+                        RegionTarget::Inventory.label(),
+                    );
+                    ui.selectable_value(
+                        &mut self.region_target,
+                        RegionTarget::Stash,
+                        RegionTarget::Stash.label(),
+                    );
+                    ui.selectable_value(
+                        &mut self.region_target,
+                        RegionTarget::Map,
+                        RegionTarget::Map.label(),
+                    );
                 });
             if ui.button("Save selection").clicked() {
                 self.save_dragged_region();
@@ -305,10 +335,11 @@ impl LittleOilGui {
                 let pos = response.interact_pointer_pos().unwrap_or_default();
                 self.drag = Some((pos, pos));
             }
-            if response.dragged() {
-                if let (Some(drag), Some(cur)) = (self.drag.as_mut(), response.interact_pointer_pos()) {
-                    drag.1 = cur;
-                }
+            if response.dragged()
+                && let (Some(drag), Some(cur)) =
+                    (self.drag.as_mut(), response.interact_pointer_pos())
+            {
+                drag.1 = cur;
             }
             if response.drag_stopped() {
                 if let Some(cur) = response.interact_pointer_pos() {
@@ -320,7 +351,12 @@ impl LittleOilGui {
             // Draw the drag overlay.
             if let Some((a, b)) = self.drag {
                 let r = egui::Rect::from_two_pos(a, b);
-                ui.painter().rect_stroke(r, 0.0, egui::Stroke::new(2.0_f32, egui::Color32::LIGHT_BLUE), egui::StrokeKind::Outside);
+                ui.painter().rect_stroke(
+                    r,
+                    0.0,
+                    egui::Stroke::new(2.0_f32, egui::Color32::LIGHT_BLUE),
+                    egui::StrokeKind::Outside,
+                );
                 ui.painter().text(
                     r.max + egui::vec2(4.0, 0.0),
                     egui::Align2::LEFT_TOP,
@@ -335,10 +371,16 @@ impl LittleOilGui {
         ui.add_space(8.0);
         let s = self.app.settings.read();
         if let Some(r) = s.game_window_region {
-            ui.label(format!("game: {}x{} @ ({}, {})", r.width, r.height, r.x, r.y));
+            ui.label(format!(
+                "game: {}x{} @ ({}, {})",
+                r.width, r.height, r.x, r.y
+            ));
         }
         if let Some(r) = s.inv_region {
-            ui.label(format!("inventory: {}x{} @ ({}, {})", r.width, r.height, r.x, r.y));
+            ui.label(format!(
+                "inventory: {}x{} @ ({}, {})",
+                r.width, r.height, r.x, r.y
+            ));
         }
         if s.inv_samples.as_ref().map(|v| v.len()) != Some(60) {
             ui.colored_label(
@@ -374,8 +416,12 @@ impl LittleOilGui {
 
     fn draw_inv_overlay(&self, ui: &egui::Ui, rect: egui::Rect, preview: &Preview) {
         let settings = self.app.settings.read();
-        let Some(inv) = settings.inv_region else { return };
-        let Some(samples) = settings.inv_samples.clone() else { return };
+        let Some(inv) = settings.inv_region else {
+            return;
+        };
+        let Some(samples) = settings.inv_samples.clone() else {
+            return;
+        };
         if samples.len() != 60 {
             return;
         }
@@ -411,7 +457,7 @@ impl LittleOilGui {
                             .zip(samples[(col * 5 + row) as usize].iter())
                             .filter(|(p, s)| {
                                 frame
-                                    .try_get_pixel(p.0 as usize, p.1 as usize)
+                                    .try_get_pixel(p.0, p.1)
                                     .map(|px| px == **s)
                                     .unwrap_or(false)
                             })
@@ -423,16 +469,23 @@ impl LittleOilGui {
                 let p1 = to_disp(cell_x + cell_w, cell_y + cell_h);
                 let cell = egui::Rect::from_two_pos(p0, p1);
                 if occupied {
-                    ui.painter().rect_filled(cell, 0.0, egui::Color32::from_rgba_unmultiplied(220, 60, 60, 110));
+                    ui.painter().rect_filled(
+                        cell,
+                        0.0,
+                        egui::Color32::from_rgba_unmultiplied(220, 60, 60, 110),
+                    );
                 }
                 ui.painter().rect_stroke(
                     cell,
                     0.0,
-                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 60)),
+                    egui::Stroke::new(
+                        1.0_f32,
+                        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 60),
+                    ),
                     egui::StrokeKind::Inside,
                 );
+            }
         }
-    }
     }
 
     fn ui_settings(&mut self, ui: &mut egui::Ui) {
@@ -442,22 +495,34 @@ impl LittleOilGui {
         let mut dirty = false;
         {
             let mut s = self.app.settings.write();
-            egui::Grid::new("settings_grid").num_columns(2).show(ui, |ui| {
-                let mut focus_clicks = s.focus_clicks;
-                ui.label("Focus clicks:");
-                if ui.add(egui::DragValue::new(&mut focus_clicks).range(1..=5)).changed() {
-                    s.focus_clicks = focus_clicks;
-                    dirty = true;
-                }
-                ui.end_row();
-                let mut scale = s.pointer_scale.unwrap_or(1.25);
-                ui.label("Pointer scale:");
-                if ui.add(egui::DragValue::new(&mut scale).speed(0.01).range(0.5..=3.0)).changed() {
-                    s.pointer_scale = Some(scale);
-                    dirty = true;
-                }
-                ui.end_row();
-            });
+            egui::Grid::new("settings_grid")
+                .num_columns(2)
+                .show(ui, |ui| {
+                    let mut focus_clicks = s.focus_clicks;
+                    ui.label("Focus clicks:");
+                    if ui
+                        .add(egui::DragValue::new(&mut focus_clicks).range(1..=5))
+                        .changed()
+                    {
+                        s.focus_clicks = focus_clicks;
+                        dirty = true;
+                    }
+                    ui.end_row();
+                    let mut scale = s.pointer_scale.unwrap_or(1.25);
+                    ui.label("Pointer scale:");
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut scale)
+                                .speed(0.01)
+                                .range(0.5..=3.0),
+                        )
+                        .changed()
+                    {
+                        s.pointer_scale = Some(scale);
+                        dirty = true;
+                    }
+                    ui.end_row();
+                });
         }
         if dirty {
             let settings_snapshot = self.app.settings.read().clone();
@@ -477,19 +542,21 @@ impl LittleOilGui {
                 ui.weak(format!("unknown: {e}"));
             }
         }
-        if ui.button("Open config folder").clicked() {
-            if let Ok(p) = config_path() {
-                if let Some(dir) = p.parent() {
-                    #[cfg(target_os = "linux")]
-                    let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
-                    #[cfg(target_os = "windows")]
-                    let _ = std::process::Command::new("explorer").arg(dir).spawn();
-                }
-            }
+        if ui.button("Open config folder").clicked()
+            && let Ok(p) = config_path()
+            && let Some(dir) = p.parent()
+        {
+            #[cfg(target_os = "linux")]
+            let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+            #[cfg(target_os = "windows")]
+            let _ = std::process::Command::new("explorer").arg(dir).spawn();
         }
         ui.add_space(10.0);
         ui.heading("About");
-        ui.label(format!("little_oil v{} — PoE automation", env!("CARGO_PKG_VERSION")));
+        ui.label(format!(
+            "little_oil v{} — PoE automation",
+            env!("CARGO_PKG_VERSION")
+        ));
     }
 }
 
@@ -534,9 +601,24 @@ impl eframe::App for LittleOilGui {
 fn build_menu() -> Result<muda::Menu> {
     let menu = muda::Menu::new();
     menu.append_items(&[
-        &muda::MenuItem::with_id(muda::MenuId::new("empty"), "Empty inventory (left)", true, None),
-        &muda::MenuItem::with_id(muda::MenuId::new("emptyr"), "Empty inventory (right)", true, None),
-        &muda::MenuItem::with_id(muda::MenuId::new("recalibrate"), "Recalibrate inventory colors", true, None),
+        &muda::MenuItem::with_id(
+            muda::MenuId::new("empty"),
+            "Empty inventory (left)",
+            true,
+            None,
+        ),
+        &muda::MenuItem::with_id(
+            muda::MenuId::new("emptyr"),
+            "Empty inventory (right)",
+            true,
+            None,
+        ),
+        &muda::MenuItem::with_id(
+            muda::MenuId::new("recalibrate"),
+            "Recalibrate inventory colors",
+            true,
+            None,
+        ),
         &muda::PredefinedMenuItem::separator(),
         &muda::PredefinedMenuItem::quit(None),
     ])?;
@@ -620,16 +702,24 @@ impl LittleOilGui {
         if self.hotkeys.is_some() {
             return;
         }
-        use global_hotkey::hotkey::{Code, HotKey};
         use global_hotkey::GlobalHotKeyManager;
+        use global_hotkey::hotkey::{Code, HotKey};
         let Ok(manager) = GlobalHotKeyManager::new() else {
             tracing::warn!("global hotkey manager unavailable");
             return;
         };
         let candidates = [
-            (HotKey::new(None, Code::F10), "emptyr (F10)" as &'static str, "emptyr" as &'static str),
+            (
+                HotKey::new(None, Code::F10),
+                "emptyr (F10)" as &'static str,
+                "emptyr" as &'static str,
+            ),
             (HotKey::new(None, Code::F11), "empty (F11)", "empty"),
-            (HotKey::new(None, Code::F12), "recalibrate (F12)", "recalibrate"),
+            (
+                HotKey::new(None, Code::F12),
+                "recalibrate (F12)",
+                "recalibrate",
+            ),
         ];
         let mut actions: Vec<(u32, &'static str, &'static str)> = Vec::new();
         for (hk, label, action) in candidates {
@@ -637,7 +727,10 @@ impl LittleOilGui {
                 actions.push((hk.id(), label, action));
             }
         }
-        tracing::info!(count = actions.len(), "registered global hotkeys (F10 emptyr, F11 empty, F12 recalibrate)");
+        tracing::info!(
+            count = actions.len(),
+            "registered global hotkeys (F10 emptyr, F11 empty, F12 recalibrate)"
+        );
         self.hotkeys = Some(Hotkeys {
             _manager: manager,
             actions,
