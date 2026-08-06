@@ -1,6 +1,6 @@
 name: build-windows-release
 
-# Builds the Windows release exe on every push to main and uploads it as a
+# Builds the Windows release exe on every push to master and uploads it as a
 # workflow artifact (Actions tab → run → Artifacts). This replaces committing
 # the binary to git.
 #
@@ -10,7 +10,7 @@ name: build-windows-release
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   workflow_dispatch:
 
 jobs:

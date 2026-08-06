@@ -10,7 +10,7 @@ system tray and global hotkeys.
 
 ### Install
 
-Every push to `main` builds the Windows exe automatically — grab it from
+Every push to `master` builds the Windows exe automatically — grab it from
 **Actions → build-windows-release → latest run → Artifacts →
 `little_oil-windows-x86_64`**. Unzip anywhere and run `little_oil.exe`.
 Windows 10 2004+ is required (WGC). No extra runtime DLLs, no installer, no
