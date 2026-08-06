@@ -10,16 +10,14 @@ system tray and global hotkeys.
 
 ### Install
 
-Download `little_oil-windows.zip` from the latest release, unzip anywhere, and
-run `little_oil.exe`. Windows 10 2004+ is required (WGC). No extra runtime
-DLLs, no installer, no admin rights.
+Every push to `main` builds the Windows exe automatically — grab it from
+**Actions → build-windows-release → latest run → Artifacts →
+`little_oil-windows-x86_64`**. Unzip anywhere and run `little_oil.exe`.
+Windows 10 2004+ is required (WGC). No extra runtime DLLs, no installer, no
+admin rights.
 
 Build your own on a Windows machine (MSVC toolchain, the most conventional
 distribution build):
-
-```sh
-cargo build --release --target x86_64-pc-windows-msvc
-```
 
 Cross-build from the nix dev shell on this machine:
 

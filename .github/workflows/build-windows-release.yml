@@ -1,0 +1,45 @@
+name: build-windows-release
+
+# Builds the Windows release exe on every push to main and uploads it as a
+# workflow artifact (Actions tab → run → Artifacts). This replaces committing
+# the binary to git.
+#
+# The build runs natively on a Windows runner with the MSVC toolchain — the
+# most conventional distribution build (no mingw runtime concerns).
+# Local cross-build from Linux (mingw): scripts/build-windows.sh
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # Puts rc.exe (Windows SDK resource compiler) on PATH so build.rs can
+      # embed the app icon + version info via winresource.
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build release
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $exe = "target/x86_64-pc-windows-msvc/release/little_oil.exe"
+          if (-not (Test-Path $exe)) { throw "release exe not found: $exe" }
+          Compress-Archive -Path $exe -DestinationPath little_oil-windows-x86_64.zip
+          Get-Item little_oil-windows-x86_64.zip | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: little_oil-windows-x86_64
+          path: little_oil-windows-x86_64.zip
+          if-no-files-found: error
