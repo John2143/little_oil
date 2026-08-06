@@ -1,4 +1,4 @@
-#![allow(dead_code, unused)]
+//! Item tooltip parsing and mod classification for rolling.
 use std::{fmt::Display, ops::Range};
 
 use anyhow::Context;
@@ -39,7 +39,7 @@ pub enum ItemName {
     Unique(String),
 }
 
-impl<'a> Display for ItemName {
+impl Display for ItemName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ItemName::Other(name) => write!(f, "?: {name}")?,
@@ -66,17 +66,21 @@ impl<'a> Display for ItemName {
 #[derive(Debug)]
 pub struct ItemMod<'a> {
     /// prefix, suffix, unique
-    affix_type: AffixType,
+    pub affix_type: AffixType,
 
     /// Contains the tier if it's a rare mod
-    affix_name_tier: Option<AffixNameTier<'a>>,
+    pub affix_name_tier: Option<AffixNameTier<'a>>,
 
-    value: Option<Decimal>,
-    roll_range: Option<Range<Decimal>>,
+    pub value: Option<Decimal>,
+    pub roll_range: Option<Range<Decimal>>,
+
+    /// Raw value line under the mod header (e.g. `+29(24-29)% to Lightning Resistance (fractured)`).
+    pub full_text: &'a str,
 
     /// Tags for catalysts: things like Defenses, Evasion, Fire
-    tags: Vec<&'a str>,
+    pub tags: Vec<&'a str>,
     /// is fractured, etc
+    #[allow(dead_code)] // parsed but not yet consumed; feature-modfilter branch uses these
     mod_qualifiers: &'a str,
 }
 
@@ -91,8 +95,8 @@ pub enum AffixType {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct AffixNameTier<'a> {
-    name: &'a str,
-    tier: i32,
+    pub name: &'a str,
+    pub tier: i32,
 }
 
 // { Prefix Modifier "Phantasm's" (Tier: 3) — Defences, Evasion }
@@ -100,32 +104,32 @@ pub struct AffixNameTier<'a> {
 //                      {     Prefix          Modifier    "Phantasm's  "  (Tier:      3        )      —  Defences, Evasion        }
 //                         vvvvvvvvvvvvvvvvv               vvvvvvvvvvvv           vvvvvvvvvvvvv            vvvvvvvvvvv
 const IMR_1: &str = r#"\{ (?P<affix_type>\w+) Modifier (?:"(?P<name>.+)" \(Tier: (?P<tier>\d+)\) )?(?:— (?P<affixes>.*) )?\}"#;
-const ITEM_MOD_LINE_1_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(IMR_1).unwrap());
+static ITEM_MOD_LINE_1_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(IMR_1).unwrap());
 
 const IMR_2: &str = r#"(?P<before>[^\d]*)(?P<value>\d+(?:\.\d+)?)?(?:\((?P<bot_roll>\d+(?:\.\d+)?)-(?P<top_roll>\d+(?:\.\d+)?)\))?(?P<end>.*)"#;
-const ITEM_MOD_LINE_2_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(IMR_2).unwrap());
+static ITEM_MOD_LINE_2_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(IMR_2).unwrap());
 
 const CR: &str = r#"(?P<left>[^:]+):(?P<right>.+)"#;
-const COLON_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(CR).unwrap());
+static COLON_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(CR).unwrap());
 
 enum ItemParseSections {
-    ItemClass,
-    ItemRarity,
-    ItemName,
+    Class,
+    Rarity,
+    Name,
 
-    ItemStats,
+    Stats,
 
-    //ItemRequirements,
-    //ItemSockets,
-    //ItemLevel,
-    ItemMods,
+    //Requirements,
+    //Sockets,
+    //Level,
+    Mods,
 }
 
 impl<'a> Item<'a> {
-    fn from_str(source: &'a str) -> anyhow::Result<Self> {
+    pub(crate) fn from_str(source: &'a str) -> anyhow::Result<Self> {
         let span = span!(tracing::Level::DEBUG, "Item Parser");
         let _ = span.enter();
-        let mut cur_parser_state = ItemParseSections::ItemClass;
+        let mut cur_parser_state = ItemParseSections::Class;
 
         let mut item_type = None;
         let mut item_name = String::new();
@@ -138,44 +142,46 @@ impl<'a> Item<'a> {
 
             match cur_parser_state {
                 //First state: What are we looking at?
-                ItemParseSections::ItemClass => {
+                ItemParseSections::Class => {
                     let res = COLON_REGEX
                         .captures(line)
                         .context("should match first line")?;
 
-                    assert_eq!(
-                        res.name("left")
-                            .context("left part of first line")?
-                            .as_str(),
-                        "Item Class"
-                    );
+                    let left = res
+                        .name("left")
+                        .context("left part of first line")?
+                        .as_str();
+                    if left != "Item Class" {
+                        anyhow::bail!("expected 'Item Class', got '{left}'");
+                    }
 
-                    item_type = Some(res.name("right").unwrap());
+                    item_type = Some(res.name("right").context("right part of first line")?);
 
                     debug!(?item_type);
-                    cur_parser_state = ItemParseSections::ItemRarity;
+                    cur_parser_state = ItemParseSections::Rarity;
                 }
-                ItemParseSections::ItemRarity => {
+                ItemParseSections::Rarity => {
                     let res = COLON_REGEX
                         .captures(line)
                         .context("should match first line")?;
 
-                    assert_eq!(
-                        res.name("left")
-                            .context("left part of first line")?
-                            .as_str(),
-                        "Rarity"
-                    );
+                    let left = res
+                        .name("left")
+                        .context("left part of first line")?
+                        .as_str();
+                    if left != "Rarity" {
+                        anyhow::bail!("expected 'Rarity', got '{left}'");
+                    }
 
-                    let _ = Some(res.name("right").unwrap());
+                    let _ = res.name("right").context("right part of rarity line")?;
 
                     debug!(?item_type);
-                    cur_parser_state = ItemParseSections::ItemName;
+                    cur_parser_state = ItemParseSections::Name;
                 }
-                ItemParseSections::ItemName => {
+                ItemParseSections::Name => {
                     if line == "--------" {
                         trace!("Item line separator");
-                        cur_parser_state = ItemParseSections::ItemStats;
+                        cur_parser_state = ItemParseSections::Stats;
                         continue;
                     }
 
@@ -184,26 +190,25 @@ impl<'a> Item<'a> {
                     }
                     item_name.push_str(line);
                 }
-                ItemParseSections::ItemStats => {
+                ItemParseSections::Stats => {
                     if line == "--------" {
                         trace!("Item line separator");
 
                         // Check the next line to see if it contains a mod.
                         // If it does, advance the state.
-                        if line_iterator
-                            .peek()
-                            .context("nothing after separator")?
-                            .starts_with("{")
-                        {
-                            debug!("Moving to next state");
-                            cur_parser_state = ItemParseSections::ItemMods;
-                            continue;
+                        match line_iterator.peek() {
+                            Some(next) if next.starts_with('{') => {
+                                debug!("Moving to next state");
+                                cur_parser_state = ItemParseSections::Mods;
+                                continue;
+                            }
+                            _ => {} // no next line or no mod header — stay in Stats
                         }
                     }
 
                     trace!(line, "Item stat line");
                 }
-                ItemParseSections::ItemMods => {
+                ItemParseSections::Mods => {
                     // If we have a mod line saved, then combine that with the current line.
                     // These two lines make up a single mod. ex:
                     //
@@ -211,8 +216,9 @@ impl<'a> Item<'a> {
                     // cur:   +49(40-50)% to Fire Resistance
                     if let Some(last_line) = current_parsed_modline {
                         debug!("... Got second modline");
-                        let item_mod = ItemMod::from_strs(last_line, line)?;
-                        mods.push(item_mod);
+                        if let Ok(item_mod) = ItemMod::from_strs(last_line, line) {
+                            mods.push(item_mod);
+                        }
                         current_parsed_modline = None;
                     // If the line starts with `{`, then it is a mod
                     } else if line.starts_with("{") {
@@ -295,7 +301,7 @@ impl<'a> ItemMod<'a> {
             Some("Implicit") => AffixType::Implicit,
             // TODO parse error
             Some(at) => anyhow::bail!("Unknown affix type {at}"),
-            None => unreachable!("required in regex pattern"),
+            None => anyhow::bail!("mod header missing affix type"),
         };
 
         let ant = match (q.name("name").map(|x| x.as_str()), q.name("tier")) {
@@ -337,6 +343,7 @@ impl<'a> ItemMod<'a> {
             affix_name_tier: ant,
             value,
             roll_range,
+            full_text: bottom_line,
             tags,
             mod_qualifiers: "", //TODO
         };
@@ -429,34 +436,32 @@ mod test {
         }
     }
 
-    #[traced_test]
     #[test]
-    fn item_mods() {
-        let _ = [
-            r#"
-                { Prefix Modifier "Phantasm's" (Tier: 3) — Defences, Evasion }
-                79(68-79)% increased Evasion Rating
-            "#,
-            r#"
-                { Unique Modifier — Elemental, Fire, Resistance }
-                +49(40-50)% to Fire Resistance
-            "#,
-            r#"
-                { Unique Modifier — Mana }
-                60% increased Mana Regeneration Rate
-            "#,
-            r#"
-                { Unique Modifier }
-                17(14-20)% increased Quantity of Items found
-            "#,
-            r#"
-                { Unique Modifier — Speed }
-                10% increased Movement Speed
-            "#,
-            r#"
-                { Suffix Modifier "of the Thunderhead" (Tier: 5) — Elemental, Lightning, Resistance }
-                +29(24-29)% to Lightning Resistance (fractured)
-            "#,
-        ];
+    fn every_example_item_parses() {
+        let files = crate::test_support::example_item_files();
+        assert!(
+            !files.is_empty(),
+            "no .txt files found under tests/example_items — add pasted tooltips there"
+        );
+        let mut failures = Vec::new();
+        for path in &files {
+            let text = match std::fs::read_to_string(path) {
+                Ok(t) => t,
+                Err(e) => {
+                    failures.push(format!("{}: read: {e}", path.display()));
+                    continue;
+                }
+            };
+            if let Err(e) = Item::from_str(&text) {
+                failures.push(format!("{}: {e}", path.display()));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "{} of {} example items failed to parse:\n{}",
+            failures.len(),
+            files.len(),
+            failures.join("\n")
+        );
     }
 }

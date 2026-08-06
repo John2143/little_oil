@@ -3,3 +3,4 @@ config.json
 .direnv/
 .direnv/*
 result
+/dist

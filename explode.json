@@ -1,13 +1,9 @@
 {
-  "item_name": "Conjurer's Vestment",
+  "item_name": "Rhex Talisman",
   "mods": [
     {
-      "name": "(21-30)% chance to explode",
-      "is_prefix": false
-    },
-    {
-      "name": "frenzy",
-      "is_prefix": false
+      "name": "all skill gems",
+      "is_prefix": true
     }
   ],
   "auto_aug_regal": false
