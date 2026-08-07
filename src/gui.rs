@@ -7,9 +7,12 @@
 //!
 //! Tabs:
 //! * **Actions** — empty inventory (left/right), recalibrate colors, log.
+//! * **Setup** — guided first-run wizard: detect window, drag regions, sample
+//!   inventory colors, calibrate pointer.
 //! * **Calibrate** — capture the game window, drag a rectangle, save it as a
 //!   region (game/inventory/stash/map), re-sample inventory colors.
 //! * **Inventory** — capture + live occupied-slot overlay.
+//! * **Health** — checkhealth-style diagnostics (also `little_oil doctor`).
 //! * **Settings** — edit region numbers, pointer scale, focus clicks.
 
 use crate::app::App;
@@ -68,6 +71,19 @@ struct Preview {
     /// renders it) — used to map display-space drags to image pixels.
     rect: egui::Rect,
 }
+
+/// Wizard progress. `step` is the current wizard step index (0..=5).
+struct SetupState {
+    step: usize,
+    /// Result of the last "Detect game window" press.
+    detected_window: Option<ScreenRegion>,
+    /// True once the user pressed "Detect game window" — "Not found" only
+    /// shows after an actual attempt.
+    detect_tried: bool,
+    /// Wizard step a desktop capture was last auto-attempted for: one attempt
+    /// per step entry, so a failing capture doesn't spam the log every frame.
+    last_captured_step: Option<usize>,
+}
 struct LittleOilGui {
     app: Arc<App>,
     state: Arc<Mutex<GuiState>>,
@@ -83,6 +99,9 @@ struct LittleOilGui {
     region_target: RegionTarget,
     show_inv_overlay: bool,
     status: String,
+    setup: SetupState,
+    health_checks: Option<Vec<crate::health::Check>>,
+    last_tab: &'static str,
 
     // Windows-only: system tray + global hotkeys. Kept here (the event-loop
     // thread) because both are !Send/!Sync on Windows.
@@ -97,17 +116,27 @@ impl LittleOilGui {
         let state = Arc::new(Mutex::new(GuiState {
             log: VecDeque::new(),
         }));
+        let first_run = !app.settings.read().setup_complete;
+        let tab = if first_run { "Setup" } else { "Actions" };
         let mut this = LittleOilGui {
             app,
             state,
             busy: Arc::new(AtomicBool::new(false)),
-            tab: "Actions",
+            tab,
             preview: None,
             drag: None,
             right_click_screen: None,
             region_target: RegionTarget::Game,
             show_inv_overlay: false,
             status: String::new(),
+            setup: SetupState {
+                step: 0,
+                detected_window: None,
+                detect_tried: false,
+                last_captured_step: None,
+            },
+            health_checks: None,
+            last_tab: tab,
             #[cfg(target_os = "windows")]
             tray: None,
             #[cfg(target_os = "windows")]
@@ -373,76 +402,7 @@ impl LittleOilGui {
         ui.label(
             "Drag to select a region. Right-click the preview to select a whole window or monitor.",
         );
-        if self.preview.is_some() {
-            // Short borrows only — the interaction handlers below take &mut self.
-            let shown = self.preview.as_ref().map(|p| p.shown).unwrap_or_default();
-            let (rect, response) = ui.allocate_exact_size(shown, egui::Sense::click_and_drag());
-            if let Some(prev) = &mut self.preview {
-                prev.rect = rect;
-            }
-            if let Some(prev) = &self.preview {
-                ui.painter().image(
-                    prev.texture.id(),
-                    rect,
-                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
-                    egui::Color32::WHITE,
-                );
-            }
-            if response.drag_started() {
-                let pos = response.interact_pointer_pos().unwrap_or_default();
-                self.drag = Some((pos, pos));
-            }
-            if response.dragged()
-                && let (Some(drag), Some(cur)) =
-                    (self.drag.as_mut(), response.interact_pointer_pos())
-            {
-                drag.1 = cur;
-            }
-            if response.drag_stopped() {
-                if let Some(cur) = response.interact_pointer_pos() {
-                    let anchor = self.drag.unwrap_or((cur, cur)).0;
-                    self.drag = Some((anchor, cur));
-                }
-                self.save_dragged_region();
-            }
-            if response.secondary_clicked() {
-                self.right_click_screen = response
-                    .interact_pointer_pos()
-                    .and_then(|p| self.screen_point_of(p));
-            }
-            // Right-click context menu: select the whole window or monitor.
-            response.context_menu(|ui| {
-                if ui.button("Select whole window under cursor").clicked() {
-                    if let Some((sx, sy)) = self.right_click_screen {
-                        self.select_whole_window(sx, sy);
-                    }
-                    ui.close();
-                }
-                if ui.button("Select whole monitor under cursor").clicked() {
-                    if let Some((sx, sy)) = self.right_click_screen {
-                        self.select_whole_monitor(sx, sy);
-                    }
-                    ui.close();
-                }
-            });
-            // Draw the drag overlay.
-            if let Some((a, b)) = self.drag {
-                let r = egui::Rect::from_two_pos(a, b);
-                ui.painter().rect_stroke(
-                    r,
-                    0.0,
-                    egui::Stroke::new(2.0_f32, egui::Color32::LIGHT_BLUE),
-                    egui::StrokeKind::Outside,
-                );
-                ui.painter().text(
-                    r.max + egui::vec2(4.0, 0.0),
-                    egui::Align2::LEFT_TOP,
-                    self.region_target.label(),
-                    egui::FontId::monospace(12.0),
-                    egui::Color32::LIGHT_BLUE,
-                );
-            }
-        } else {
+        if !self.preview_and_drag(ui) {
             ui.weak("No capture yet — click \"Capture game window\".");
         }
         ui.add_space(8.0);
@@ -465,6 +425,83 @@ impl LittleOilGui {
                 "Inventory colors not sampled — run \"Recalibrate inventory colors\" after setting the inventory region.",
             );
         }
+    }
+
+    /// Render the captured desktop and handle drag-select + right-click
+    /// selection (whole window/monitor). Returns false when there is no
+    /// preview — the caller shows its own hint.
+    fn preview_and_drag(&mut self, ui: &mut egui::Ui) -> bool {
+        let Some(_) = &self.preview else {
+            return false;
+        };
+        // Short borrows only — the interaction handlers below take &mut self.
+        let shown = self.preview.as_ref().map(|p| p.shown).unwrap_or_default();
+        let (rect, response) = ui.allocate_exact_size(shown, egui::Sense::click_and_drag());
+        if let Some(prev) = &mut self.preview {
+            prev.rect = rect;
+        }
+        if let Some(prev) = &self.preview {
+            ui.painter().image(
+                prev.texture.id(),
+                rect,
+                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+        }
+        if response.drag_started() {
+            let pos = response.interact_pointer_pos().unwrap_or_default();
+            self.drag = Some((pos, pos));
+        }
+        if response.dragged()
+            && let (Some(drag), Some(cur)) = (self.drag.as_mut(), response.interact_pointer_pos())
+        {
+            drag.1 = cur;
+        }
+        if response.drag_stopped() {
+            if let Some(cur) = response.interact_pointer_pos() {
+                let anchor = self.drag.unwrap_or((cur, cur)).0;
+                self.drag = Some((anchor, cur));
+            }
+            self.save_dragged_region();
+        }
+        if response.secondary_clicked() {
+            self.right_click_screen = response
+                .interact_pointer_pos()
+                .and_then(|p| self.screen_point_of(p));
+        }
+        // Right-click context menu: select the whole window or monitor.
+        response.context_menu(|ui| {
+            if ui.button("Select whole window under cursor").clicked() {
+                if let Some((sx, sy)) = self.right_click_screen {
+                    self.select_whole_window(sx, sy);
+                }
+                ui.close();
+            }
+            if ui.button("Select whole monitor under cursor").clicked() {
+                if let Some((sx, sy)) = self.right_click_screen {
+                    self.select_whole_monitor(sx, sy);
+                }
+                ui.close();
+            }
+        });
+        // Draw the drag overlay.
+        if let Some((a, b)) = self.drag {
+            let r = egui::Rect::from_two_pos(a, b);
+            ui.painter().rect_stroke(
+                r,
+                0.0,
+                egui::Stroke::new(2.0_f32, egui::Color32::LIGHT_BLUE),
+                egui::StrokeKind::Outside,
+            );
+            ui.painter().text(
+                r.max + egui::vec2(4.0, 0.0),
+                egui::Align2::LEFT_TOP,
+                self.region_target.label(),
+                egui::FontId::monospace(12.0),
+                egui::Color32::LIGHT_BLUE,
+            );
+        }
+        true
     }
 
     fn ui_inventory(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -570,6 +607,339 @@ impl LittleOilGui {
         }
     }
 
+    /// Whether the wizard's pointer-calibration step should be shown at all.
+    /// Absolute-positioning platforms (niri on Linux, Windows) never need it.
+    #[cfg(target_os = "linux")]
+    fn wizard_pointer_step_needed(&self) -> bool {
+        !self.app.platform().uses_absolute_pointer()
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn wizard_pointer_step_needed(&self) -> bool {
+        false
+    }
+
+    /// Capture a fresh desktop preview once per wizard step entry, so a
+    /// failing capture doesn't retry (and spam the log) every frame.
+    fn auto_capture_once(&mut self, ctx: &egui::Context) {
+        if self.preview.is_none() && self.setup.last_captured_step != Some(self.setup.step) {
+            self.capture_preview(ctx);
+            self.setup.last_captured_step = Some(self.setup.step);
+        }
+    }
+
+    /// Guided first-run setup. Auto-selected when `setup_complete` is false;
+    /// always re-runnable from the tab bar. Reuses the Calibrate tab's drag
+    /// machinery (preview_and_drag) so the wizard and manual calibration can
+    /// never drift apart.
+    fn ui_setup(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.heading("Setup");
+        if self.app.settings.read().setup_complete {
+            ui.colored_label(
+                egui::Color32::from_rgb(120, 200, 120),
+                "✓ Setup complete — you can redo any step below.",
+            );
+        }
+        ui.label(format!("Step {} of 5", self.setup.step + 1));
+        ui.add_space(6.0);
+        match self.setup.step {
+            0 => {
+                ui.label("Launch Path of Exile (any window mode) before continuing.");
+                ui.add_space(4.0);
+                if ui
+                    .button("Detect game window")
+                    .on_hover_text("Finds the Path of Exile window on this desktop")
+                    .clicked()
+                {
+                    self.setup.detected_window = self.app.platform().find_game_window();
+                    self.setup.detect_tried = true;
+                }
+                ui.add_space(4.0);
+                match self.setup.detected_window {
+                    Some(r) => {
+                        ui.label(format!(
+                            "Found: {}x{} @ ({}, {})",
+                            r.width, r.height, r.x, r.y
+                        ));
+                        if ui.button("Use this window").clicked() {
+                            if let Some(r) = self.setup.detected_window.take() {
+                                self.apply_selected_region(RegionTarget::Game, r, "setup");
+                            }
+                            self.setup.step = 1;
+                        }
+                    }
+                    None if self.setup.detect_tried => {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(220, 160, 60),
+                            "Not found — open the game and retry, or continue and drag it manually.",
+                        );
+                    }
+                    None => {}
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .button("Continue without detecting")
+                        .on_hover_text("You'll drag the game window region on the next step")
+                        .clicked()
+                    {
+                        self.setup.detected_window = None;
+                        self.setup.detect_tried = false;
+                        self.setup.step = 1;
+                    }
+                    if ui
+                        .button("Skip setup")
+                        .on_hover_text("Close the wizard — re-open it from the Setup tab anytime")
+                        .clicked()
+                    {
+                        self.setup.step = 0;
+                        self.setup.detected_window = None;
+                        self.setup.detect_tried = false;
+                        self.tab = "Actions";
+                    }
+                });
+            }
+            1 => {
+                self.region_target = RegionTarget::Game;
+                self.auto_capture_once(ctx);
+                ui.label("Drag a rectangle around the whole game window, then press Continue.");
+                ui.horizontal(|ui| {
+                    if ui.button("Capture desktop").clicked() {
+                        self.capture_preview(ctx);
+                    }
+                });
+                ui.add_space(4.0);
+                if !self.preview_and_drag(ui) {
+                    ui.weak("No capture yet — press \"Capture desktop\".");
+                }
+                let game_set = self.app.settings.read().game_window_region.is_some();
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Back").clicked() {
+                        self.setup.step = 0;
+                    }
+                    if ui
+                        .add_enabled(game_set, egui::Button::new("Continue"))
+                        .on_hover_text("Needs a game window region — drag one above first")
+                        .clicked()
+                    {
+                        self.setup.step = 2;
+                    }
+                });
+            }
+            2 => {
+                self.region_target = RegionTarget::Inventory;
+                self.auto_capture_once(ctx);
+                ui.label("Open your inventory in the game and leave it EMPTY, then drag a rectangle around the 12x5 grid.");
+                ui.horizontal(|ui| {
+                    if ui.button("Capture desktop").clicked() {
+                        self.capture_preview(ctx);
+                    }
+                });
+                ui.add_space(4.0);
+                if !self.preview_and_drag(ui) {
+                    ui.weak("No capture yet — press \"Capture desktop\".");
+                }
+                let inv_set = self.app.settings.read().inv_region.is_some();
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Back").clicked() {
+                        self.setup.step = 1;
+                    }
+                    if ui
+                        .add_enabled(inv_set, egui::Button::new("Continue"))
+                        .on_hover_text("Needs an inventory region — drag one above first")
+                        .clicked()
+                    {
+                        self.setup.step = 3;
+                    }
+                });
+            }
+            3 => {
+                ui.label("Keep the inventory open and empty, then press Recalibrate. Do not move the mouse while it runs.");
+                ui.add_space(4.0);
+                if ui
+                    .button("Recalibrate inventory colors")
+                    .on_hover_text(
+                        "Samples the 60 empty-slot probe colors from the inventory region",
+                    )
+                    .clicked()
+                {
+                    self.run_action("recalibrate", |app| app.reset_inv_colors());
+                }
+                ui.add_space(4.0);
+                let n = self
+                    .app
+                    .settings
+                    .read()
+                    .inv_samples
+                    .as_ref()
+                    .map(|v| v.len());
+                match n {
+                    Some(60) => {
+                        ui.colored_label(egui::Color32::from_rgb(120, 200, 120), "60/60 — done");
+                    }
+                    Some(k) => {
+                        ui.label(format!("samples: {k}/60"));
+                    }
+                    None => {
+                        ui.weak("samples: 0/60 — not sampled yet");
+                    }
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Back").clicked() {
+                        self.setup.step = 2;
+                    }
+                    if ui
+                        .add_enabled(n == Some(60), egui::Button::new("Continue"))
+                        .on_hover_text(
+                            "Needs 60 color samples — Recalibrate with an empty inventory first",
+                        )
+                        .clicked()
+                    {
+                        self.setup.step = if self.wizard_pointer_step_needed() {
+                            4
+                        } else {
+                            5
+                        };
+                    }
+                });
+            }
+            4 => {
+                ui.label("Calibrates how far the mouse moves per click. It moves the mouse for ~3 seconds — close animated windows and don't touch the mouse.");
+                ui.add_space(4.0);
+                #[cfg(target_os = "linux")]
+                if ui
+                    .button("Calibrate pointer")
+                    .on_hover_text("Measures pointer_scale by diffing cursor positions before/after a raw move")
+                    .clicked()
+                {
+                    self.run_action("calibrate-pointer", |app| app.calibrate_pointer());
+                }
+                ui.add_space(4.0);
+                if let Some(s) = self.app.settings.read().pointer_scale {
+                    ui.label(format!("pointer_scale = {s:.4}"));
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Back").clicked() {
+                        self.setup.step = 3;
+                    }
+                    if ui
+                        .button("Skip")
+                        .on_hover_text("Skip calibration — re-run Setup or calibrate-pointer later")
+                        .clicked()
+                    {
+                        self.setup.step = 5;
+                    }
+                    if ui.button("Continue").clicked() {
+                        self.setup.step = 5;
+                    }
+                });
+            }
+            _ => {
+                let s = self.app.settings.read();
+                let game = s
+                    .game_window_region
+                    .map(|r| format!("{}x{} @ ({}, {})", r.width, r.height, r.x, r.y))
+                    .unwrap_or_else(|| "not set".into());
+                let inv = s
+                    .inv_region
+                    .map(|r| format!("{}x{} @ ({}, {})", r.width, r.height, r.x, r.y))
+                    .unwrap_or_else(|| "not set".into());
+                let samples = s.inv_samples.as_ref().map(|v| v.len()).unwrap_or(0);
+                let focus = s.focus_clicks;
+                let scale = if self.wizard_pointer_step_needed() {
+                    s.pointer_scale
+                        .map(|v| format!("{v:.4}"))
+                        .unwrap_or_else(|| "not calibrated — redo step 4".into())
+                } else {
+                    "absolute positioning — not needed".into()
+                };
+                drop(s);
+                ui.add_space(4.0);
+                ui.label(format!("Game window: {game}"));
+                ui.label(format!("Inventory grid: {inv}"));
+                ui.label(format!("Color samples: {samples}/60"));
+                ui.label(format!("Focus clicks: {focus}"));
+                ui.label(format!("Pointer scale: {scale}"));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Back").clicked() {
+                        self.setup.step = if self.wizard_pointer_step_needed() {
+                            4
+                        } else {
+                            3
+                        };
+                    }
+                    if ui
+                        .button("Finish")
+                        .on_hover_text("Mark setup complete and open the Actions tab")
+                        .clicked()
+                    {
+                        {
+                            let mut w = self.app.settings.write();
+                            w.setup_complete = true;
+                        }
+                        let snapshot = self.app.settings.read().clone();
+                        let path = config_path().unwrap_or_else(|_| "config.json".into());
+                        if let Err(e) = save_config(&path, &snapshot) {
+                            self.push(format!("config write failed: {e:#}"));
+                        } else {
+                            self.push("Setup complete — you can use the Actions tab now");
+                        }
+                        self.setup.step = 0;
+                        self.setup.detected_window = None;
+                        self.setup.detect_tried = false;
+                        self.tab = "Actions";
+                    }
+                });
+            }
+        }
+    }
+
+    /// checkhealth-style diagnostics — the same checks `little_oil doctor`
+    /// runs, rendered as colored rows. Re-runs on every visit and on demand.
+    fn ui_health(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Health");
+        ui.label("Diagnostics, checkhealth-style. Fix any red items, then re-run.");
+        if self.health_checks.is_none()
+            || ui
+                .button("Re-run checks")
+                .on_hover_text("Re-run every health check now")
+                .clicked()
+        {
+            self.health_checks = Some(crate::health::run(&self.app));
+        }
+        ui.add_space(6.0);
+        let Some(checks) = &self.health_checks else {
+            return;
+        };
+        for c in checks {
+            let (color, tag) = match c.status {
+                crate::health::CheckStatus::Good => (egui::Color32::from_rgb(120, 200, 120), "✓"),
+                crate::health::CheckStatus::Warn => (egui::Color32::from_rgb(220, 160, 60), "△"),
+                crate::health::CheckStatus::Error => (egui::Color32::from_rgb(220, 60, 60), "✗"),
+            };
+            ui.horizontal(|ui| {
+                ui.colored_label(color, tag);
+                ui.monospace(format!("{:<18}", c.name));
+                ui.label(&c.message);
+            });
+        }
+        if checks
+            .iter()
+            .any(|c| c.status == crate::health::CheckStatus::Error)
+        {
+            ui.add_space(6.0);
+            ui.colored_label(
+                egui::Color32::from_rgb(220, 60, 60),
+                "Some checks failed — open the Setup tab to fix them.",
+            );
+        }
+    }
+
     fn ui_settings(&mut self, ui: &mut egui::Ui) {
         ui.heading("Settings");
         ui.label("Regions are in screen pixels. Calibrate them with the drag-select on the Calibrate tab instead of typing numbers.");
@@ -665,16 +1035,28 @@ impl eframe::App for LittleOilGui {
         self.pump_tray_events();
         #[cfg(target_os = "windows")]
         self.pump_hotkey_events();
+        if self.tab != self.last_tab {
+            self.last_tab = self.tab;
+            self.health_checks = None; // re-run on next visit to Health
+        }
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Little Oil");
                 for (tab, hint) in [
                     ("Actions", "Run the inventory macros"),
                     (
+                        "Setup",
+                        "Guided first-run setup — detect window, regions, colors",
+                    ),
+                    (
                         "Calibrate",
                         "Drag-select regions; right-click a preview for whole window/monitor",
                     ),
                     ("Inventory", "Preview the inventory overlay"),
+                    (
+                        "Health",
+                        "Diagnose why something isn't working (checkhealth-style)",
+                    ),
                     ("Settings", "Tune behavior and find the config file"),
                 ] {
                     ui.selectable_value(&mut self.tab, tab, tab)
@@ -686,8 +1068,10 @@ impl eframe::App for LittleOilGui {
         });
         egui::CentralPanel::default().show(ctx, |ui| match self.tab {
             "Actions" => self.ui_actions(ui),
+            "Setup" => self.ui_setup(ui, ctx),
             "Calibrate" => self.ui_calibrate(ui, ctx),
             "Inventory" => self.ui_inventory(ui, ctx),
+            "Health" => self.ui_health(ui),
             _ => self.ui_settings(ui),
         });
     }

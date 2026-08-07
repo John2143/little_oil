@@ -205,7 +205,7 @@ impl App {
     }
 
     #[cfg(target_os = "linux")]
-    fn calibrate_pointer(&self) -> anyhow::Result<()> {
+    pub(crate) fn calibrate_pointer(&self) -> anyhow::Result<()> {
         const D: i32 = 400; // device units; large enough that the two cursor
         // positions cannot overlap even at max deceleration
         println!("Measuring pointer scale. Do not move the mouse or type.");
@@ -910,6 +910,26 @@ impl App {
             }
             Some("version") | Some("--version") => {
                 println!("little_oil v{}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
+            Some("doctor") => {
+                // checkhealth-style diagnostics; exits non-zero on any Error.
+                let checks = crate::health::run(&self);
+                for c in &checks {
+                    let tag = match c.status {
+                        crate::health::CheckStatus::Good => "[ OK ]",
+                        crate::health::CheckStatus::Warn => "[WARN]",
+                        crate::health::CheckStatus::Error => "[ ERR]",
+                    };
+                    println!("{tag} {:<20} {}", c.name, c.message);
+                }
+                let errors = checks
+                    .iter()
+                    .filter(|c| c.status == crate::health::CheckStatus::Error)
+                    .count();
+                if errors > 0 {
+                    bail!("{errors} check(s) failed");
+                }
                 return Ok(());
             }
             Some("sort") => {

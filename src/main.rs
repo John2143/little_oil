@@ -16,6 +16,7 @@ mod auto_roll;
 mod chaos_recipe;
 mod dicts;
 mod gui;
+mod health;
 pub mod item;
 mod platform;
 mod screenshot;
@@ -72,6 +73,10 @@ pub struct Settings {
     /// Named clickable points (currency slots, filter button, …), screen space.
     #[serde(default)]
     pub points: Option<Vec<NamedPoint>>,
+    /// True once the GUI first-run wizard has been completed. Cosmetic only —
+    /// decides which tab the GUI opens on. Old configs load as false via serde.
+    #[serde(default)]
+    setup_complete: bool,
 }
 
 impl Settings {
@@ -136,6 +141,7 @@ fn default_settings() -> Settings {
         map_region: None,
         map_grid: None,
         points: None,
+        setup_complete: false,
     }
 }
 
