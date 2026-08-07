@@ -80,6 +80,50 @@ impl Platform {
         anyhow::bail!("capture_all: unsupported platform")
     }
 
+    /// Full virtual-desktop capture without the cursor. Used by the GUI
+    /// calibration preview so the whole screen can be seen and dragged over.
+    pub fn capture_desktop(&self) -> anyhow::Result<ScreenshotData> {
+        #[cfg(target_os = "linux")]
+        match self {
+            Platform::Wayland => wayland::capture_desktop(),
+            _ => anyhow::bail!("capture_desktop not implemented for platform {:?}", self),
+        }
+        #[cfg(target_os = "windows")]
+        {
+            windows::capture_desktop()
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        anyhow::bail!("capture_desktop: unsupported platform")
+    }
+
+    /// Bounds of the window under a screen point. Used by the GUI's
+    /// right-click "select whole window" calibration shortcut.
+    pub fn window_under_point(&self, x: i32, y: i32) -> Option<ScreenRegion> {
+        #[cfg(target_os = "linux")]
+        if matches!(self, Platform::Wayland) {
+            return wayland::window_under_point(x, y);
+        }
+        #[cfg(target_os = "windows")]
+        if matches!(self, Platform::Windows) {
+            return windows::window_under_point(x, y);
+        }
+        None
+    }
+
+    /// Bounds of the monitor under a screen point. Used by the GUI's
+    /// right-click "select whole monitor" calibration shortcut.
+    pub fn monitor_under_point(&self, x: i32, y: i32) -> Option<ScreenRegion> {
+        #[cfg(target_os = "linux")]
+        if matches!(self, Platform::Wayland) {
+            return wayland::monitor_under_point(x, y);
+        }
+        #[cfg(target_os = "windows")]
+        if matches!(self, Platform::Windows) {
+            return windows::monitor_under_point(x, y);
+        }
+        None
+    }
+
     /// Returns `true` when the platform uses absolute pointer positioning
     /// (no `pointer_scale` needed). On Linux this is niri only (wlr virtual
     /// pointer). On Windows all positioning is absolute.

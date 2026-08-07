@@ -57,7 +57,21 @@ pub fn screenshot(settings: &Settings) -> anyhow::Result<ScreenshotData> {
         height: img.height() as usize,
         width: img.width() as usize,
         pixels: img.to_rgba8().to_vec(),
-        origin: (region.x, region.y),
+        origin: (region.x as i32, region.y as i32),
+    })
+}
+
+/// Capture the whole desktop (every output composited at origin 0,0), without
+/// the cursor. Used by the GUI calibration preview so any region can be
+/// dragged on screen.
+#[cfg(target_os = "linux")]
+pub fn capture_desktop() -> anyhow::Result<ScreenshotData> {
+    let img = grim_capture(None, false)?;
+    Ok(ScreenshotData {
+        height: img.height() as usize,
+        width: img.width() as usize,
+        pixels: img.to_rgba8().to_vec(),
+        origin: (0, 0),
     })
 }
 
@@ -73,6 +87,96 @@ pub fn capture_all_with_cursor() -> anyhow::Result<ScreenshotData> {
     })
 }
 
+/// Clamp raw window bounds into the non-negative screen-region type used by
+/// the config. `None` if the window is entirely off the positive area.
+#[cfg(target_os = "linux")]
+fn region_from_bounds(x: i32, y: i32, w: i32, h: i32) -> Option<ScreenRegion> {
+    if w <= 0 || h <= 0 {
+        return None;
+    }
+    // Intersect with the non-negative quadrant the config can represent.
+    let x0 = x.max(0) as u32;
+    let y0 = y.max(0) as u32;
+    let x1 = (x + w).max(0) as u32;
+    let y1 = (y + h).max(0) as u32;
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    Some(ScreenRegion {
+        x: x0,
+        y: y0,
+        width: x1 - x0,
+        height: y1 - y0,
+    })
+}
+
+/// Bounds of the window under a screen point, via `hyprctl clients`.
+/// Compositors without hyprctl return None (the GUI shows a hint).
+#[cfg(target_os = "linux")]
+pub fn window_under_point(x: i32, y: i32) -> Option<ScreenRegion> {
+    let out = std::process::Command::new("hyprctl")
+        .args(["clients", "-j"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let clients: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    for w in clients.as_array()?.iter() {
+        let Some(title) = w["title"].as_str() else {
+            continue;
+        };
+        if title.contains("Little Oil") {
+            continue; // our own window
+        }
+        let (Some(at), Some(size)) = (w["at"].as_array(), w["size"].as_array()) else {
+            continue;
+        };
+        let (Some(wx), Some(wy)) = (
+            at.first().and_then(|v| v.as_i64()),
+            at.get(1).and_then(|v| v.as_i64()),
+        ) else {
+            continue;
+        };
+        let (Some(ww), Some(wh)) = (
+            size.first().and_then(|v| v.as_i64()),
+            size.get(1).and_then(|v| v.as_i64()),
+        ) else {
+            continue;
+        };
+        let (wx, wy, ww, wh) = (wx as i32, wy as i32, ww as i32, wh as i32);
+        if x >= wx && x < wx + ww && y >= wy && y < wy + wh {
+            return region_from_bounds(wx, wy, ww, wh);
+        }
+    }
+    None
+}
+
+/// Bounds of the monitor under a screen point, via `hyprctl monitors`.
+#[cfg(target_os = "linux")]
+pub fn monitor_under_point(x: i32, y: i32) -> Option<ScreenRegion> {
+    let out = std::process::Command::new("hyprctl")
+        .args(["monitors", "-j"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let monitors: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    for m in monitors.as_array()?.iter() {
+        let (Some(mx), Some(my)) = (m["x"].as_i64(), m["y"].as_i64()) else {
+            continue;
+        };
+        let (Some(mw), Some(mh)) = (m["width"].as_i64(), m["height"].as_i64()) else {
+            continue;
+        };
+        let (mx, my, mw, mh) = (mx as i32, my as i32, mw as i32, mh as i32);
+        if x >= mx && x < mx + mw && y >= my && y < my + mh {
+            return region_from_bounds(mx, my, mw, mh);
+        }
+    }
+    None
+}
 pub fn select_region(prompt: &str) -> anyhow::Result<ScreenRegion> {
     let _ = Command::new("notify-send")
         .args(["-u", "critical", "Little Oil", prompt])

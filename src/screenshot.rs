@@ -5,7 +5,7 @@ pub struct ScreenshotData {
     pub width: usize,
     pub pixels: Vec<u8>,
     /// Absolute screen coordinate of pixel (0, 0) — the capture region origin.
-    pub origin: (u32, u32),
+    pub origin: (i32, i32),
 }
 
 impl ScreenshotData {
@@ -45,17 +45,17 @@ impl ScreenshotData {
 
     /// Absolute screen coordinate of a frame pixel. Use for click targets.
     pub fn frame_to_screen(&self, x: u32, y: u32) -> (i32, i32) {
-        ((self.origin.0 + x) as i32, (self.origin.1 + y) as i32)
+        (self.origin.0 + x as i32, self.origin.1 + y as i32)
     }
 
     /// Frame pixel for an absolute screen coordinate. None if outside the frame.
     pub fn screen_to_frame(&self, sx: u32, sy: u32) -> Option<(u32, u32)> {
-        let (ox, oy) = self.origin;
-        let (dx, dy) = (sx.checked_sub(ox)?, sy.checked_sub(oy)?);
-        if dx as usize >= self.width || dy as usize >= self.height {
+        let dx = sx as i64 - self.origin.0 as i64;
+        let dy = sy as i64 - self.origin.1 as i64;
+        if dx < 0 || dy < 0 || dx as usize >= self.width || dy as usize >= self.height {
             return None;
         }
-        Some((dx, dy))
+        Some((dx as u32, dy as u32))
     }
 }
 
@@ -229,7 +229,7 @@ fn union(parent: &mut [u32], a: u32, b: u32) -> u32 {
 mod tests {
     use super::*;
 
-    fn make_frame(w: usize, h: usize, ox: u32, oy: u32, fill: u32) -> ScreenshotData {
+    fn make_frame(w: usize, h: usize, ox: i32, oy: i32, fill: u32) -> ScreenshotData {
         let mut pixels = vec![0u8; w * h * 4];
         for y in 0..h {
             for x in 0..w {
