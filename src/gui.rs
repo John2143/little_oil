@@ -326,11 +326,15 @@ impl LittleOilGui {
     fn ui_calibrate(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.heading("Calibrate");
         ui.horizontal(|ui| {
-            if ui.button("Capture game window").clicked() {
+            if ui
+                .button("Capture game window")
+                .on_hover_text("Capture the whole desktop so any region can be dragged out")
+                .clicked()
+            {
                 self.capture_preview(ctx);
             }
             ui.label("then drag a rectangle below and save it as:");
-            egui::ComboBox::from_id_salt("region_target")
+            let combo = egui::ComboBox::from_id_salt("region_target")
                 .selected_text(self.region_target.label())
                 .show_ui(ui, |ui| {
                     ui.selectable_value(
@@ -354,7 +358,14 @@ impl LittleOilGui {
                         RegionTarget::Map.label(),
                     );
                 });
-            if ui.button("Save selection").clicked() {
+            combo
+                .response
+                .on_hover_text("Which region the selection saves to");
+            if ui
+                .button("Save selection")
+                .on_hover_text("Save the dragged rectangle to the selected region")
+                .clicked()
+            {
                 self.save_dragged_region();
             }
         });
@@ -459,10 +470,15 @@ impl LittleOilGui {
     fn ui_inventory(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.heading("Inventory");
         ui.horizontal(|ui| {
-            if ui.button("Capture").clicked() {
+            if ui
+                .button("Capture")
+                .on_hover_text("Capture the whole desktop to preview the inventory overlay")
+                .clicked()
+            {
                 self.capture_preview(ctx);
             }
-            ui.checkbox(&mut self.show_inv_overlay, "overlay occupied slots");
+            ui.checkbox(&mut self.show_inv_overlay, "overlay occupied slots")
+                .on_hover_text("Highlight slots detected as occupied");
         });
         if let Some(prev) = &self.preview {
             let (rect, _) = ui.allocate_exact_size(prev.shown, egui::Sense::hover());
@@ -568,6 +584,9 @@ impl LittleOilGui {
                     ui.label("Focus clicks:");
                     if ui
                         .add(egui::DragValue::new(&mut focus_clicks).range(1..=5))
+                        .on_hover_text(
+                            "Clicks needed to focus the game window before a macro starts",
+                        )
                         .changed()
                     {
                         s.focus_clicks = focus_clicks;
@@ -581,6 +600,9 @@ impl LittleOilGui {
                             egui::DragValue::new(&mut scale)
                                 .speed(0.01)
                                 .range(0.5..=3.0),
+                        )
+                        .on_hover_text(
+                            "Multiplier applied to pointer movement (game-sensitivity offset)",
                         )
                         .changed()
                     {
@@ -608,7 +630,10 @@ impl LittleOilGui {
                 ui.weak(format!("unknown: {e}"));
             }
         }
-        if ui.button("Open config folder").clicked()
+        if ui
+            .button("Open config folder")
+            .on_hover_text("Open the folder that holds config.json")
+            .clicked()
             && let Ok(p) = config_path()
             && let Some(dir) = p.parent()
         {
@@ -643,8 +668,17 @@ impl eframe::App for LittleOilGui {
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Little Oil");
-                for tab in ["Actions", "Calibrate", "Inventory", "Settings"] {
-                    ui.selectable_value(&mut self.tab, tab, tab);
+                for (tab, hint) in [
+                    ("Actions", "Run the inventory macros"),
+                    (
+                        "Calibrate",
+                        "Drag-select regions; right-click a preview for whole window/monitor",
+                    ),
+                    ("Inventory", "Preview the inventory overlay"),
+                    ("Settings", "Tune behavior and find the config file"),
+                ] {
+                    ui.selectable_value(&mut self.tab, tab, tab)
+                        .on_hover_text(hint);
                 }
                 ui.separator();
                 ui.weak(&self.status);
