@@ -177,6 +177,47 @@ pub fn monitor_under_point(x: i32, y: i32) -> Option<ScreenRegion> {
     }
     None
 }
+
+/// Bounds of the Path of Exile window via `hyprctl clients -j`, matching on a
+/// case-insensitive title or class. Compositors without hyprctl return None
+/// (the Setup wizard lets the user drag the region instead).
+#[cfg(target_os = "linux")]
+pub fn find_game_window() -> Option<ScreenRegion> {
+    let out = std::process::Command::new("hyprctl")
+        .args(["clients", "-j"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let clients: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    for w in clients.as_array()?.iter() {
+        let (Some(title), Some(class)) = (w["title"].as_str(), w["class"].as_str()) else {
+            continue;
+        };
+        let hay = format!("{} {}", title, class).to_lowercase();
+        if !(hay.contains("pathofexile") || hay.contains("path of exile")) {
+            continue;
+        }
+        let (Some(at), Some(size)) = (w["at"].as_array(), w["size"].as_array()) else {
+            continue;
+        };
+        let (Some(wx), Some(wy)) = (
+            at.first().and_then(|v| v.as_i64()),
+            at.get(1).and_then(|v| v.as_i64()),
+        ) else {
+            continue;
+        };
+        let (Some(ww), Some(wh)) = (
+            size.first().and_then(|v| v.as_i64()),
+            size.get(1).and_then(|v| v.as_i64()),
+        ) else {
+            continue;
+        };
+        return region_from_bounds(wx as i32, wy as i32, ww as i32, wh as i32);
+    }
+    None
+}
 pub fn select_region(prompt: &str) -> anyhow::Result<ScreenRegion> {
     let _ = Command::new("notify-send")
         .args(["-u", "critical", "Little Oil", prompt])

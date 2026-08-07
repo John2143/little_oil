@@ -362,6 +362,20 @@ pub fn window_under_point(x: i32, y: i32) -> Option<ScreenRegion> {
     }
 }
 
+/// Screen bounds of an HWND (`GetWindowRect`), clamped to the non-negative
+/// quadrant like every other region. Used by `find_game_window` health checks.
+pub fn window_rect(hwnd: HWND) -> Option<ScreenRegion> {
+    unsafe {
+        use windows::Win32::Foundation::RECT;
+        use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+        let mut r = RECT::default();
+        if GetWindowRect(hwnd, &mut r as *mut _).is_err() {
+            return None;
+        }
+        clamp_region(r.left, r.top, r.right - r.left, r.bottom - r.top)
+    }
+}
+
 /// Bounds of the monitor under a screen point (`MonitorFromPoint`).
 pub fn monitor_under_point(x: i32, y: i32) -> Option<ScreenRegion> {
     unsafe {

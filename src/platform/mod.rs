@@ -124,6 +124,21 @@ impl Platform {
         None
     }
 
+    /// Bounds of the Path of Exile window if it is on screen. Used by the Setup
+    /// wizard and health checks. `None` when the game is closed or the platform
+    /// cannot enumerate windows.
+    pub fn find_game_window(&self) -> Option<ScreenRegion> {
+        #[cfg(target_os = "linux")]
+        if matches!(self, Platform::Wayland) {
+            return wayland::find_game_window();
+        }
+        #[cfg(target_os = "windows")]
+        if matches!(self, Platform::Windows) {
+            return windows::find_game_window().and_then(windows::window_rect);
+        }
+        None
+    }
+
     /// Returns `true` when the platform uses absolute pointer positioning
     /// (no `pointer_scale` needed). On Linux this is niri only (wlr virtual
     /// pointer). On Windows all positioning is absolute.
