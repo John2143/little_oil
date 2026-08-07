@@ -64,6 +64,9 @@ struct Preview {
     texture: egui::TextureHandle,
     /// Display size in points (fits the panel).
     shown: egui::Vec2,
+    /// Where the image is actually drawn this frame (set by the tab that
+    /// renders it) — used to map display-space drags to image pixels.
+    rect: egui::Rect,
 }
 struct LittleOilGui {
     app: Arc<App>,
@@ -74,6 +77,9 @@ struct LittleOilGui {
     preview: Option<Preview>,
     /// Drag rectangle in *display* space (shown image coords), when active.
     drag: Option<(egui::Pos2, egui::Pos2)>,
+    /// Screen point of the last right-click on the preview (for the
+    /// "select whole window/monitor" context menu).
+    right_click_screen: Option<(i32, i32)>,
     region_target: RegionTarget,
     show_inv_overlay: bool,
     status: String,
@@ -98,6 +104,7 @@ impl LittleOilGui {
             tab: "Actions",
             preview: None,
             drag: None,
+            right_click_screen: None,
             region_target: RegionTarget::Game,
             show_inv_overlay: false,
             status: String::new(),
@@ -157,8 +164,9 @@ impl LittleOilGui {
     }
 
     fn capture_preview(&mut self, ctx: &egui::Context) {
-        let settings = self.app.settings.read().clone();
-        match settings.screenshot() {
+        // Calibration preview: capture the whole desktop, not the current
+        // game-window region, so any region can be dragged and selected.
+        match self.app.platform().capture_desktop() {
             Ok(data) => {
                 let (w, h) = (data.width, data.height);
                 let (ox, oy) = data.origin;
@@ -170,56 +178,57 @@ impl LittleOilGui {
                     data,
                     texture,
                     shown,
+                    rect: egui::Rect::ZERO, // set by the tab that draws it
                 });
-                self.push(format!("captured {w}x{h} (origin {ox}, {oy})"));
+                self.push(format!("captured desktop {w}x{h} (origin {ox}, {oy})"));
             }
             Err(e) => self.push(format!("capture failed: {e:#}")),
         }
     }
 
+    /// Convert a display-space point to image-pixel coords using the rect the
+    /// image is actually drawn in.
+    fn display_to_image(&self, p: egui::Pos2) -> Option<(u32, u32)> {
+        let preview = self.preview.as_ref()?;
+        let rect = preview.rect;
+        let px = (p.x - rect.min.x) / rect.width() * preview.data.width as f32;
+        let py = (p.y - rect.min.y) / rect.height() * preview.data.height as f32;
+        if px < 0.0 || py < 0.0 || px > preview.data.width as f32 || py > preview.data.height as f32
+        {
+            return None;
+        }
+        Some((px as u32, py as u32))
+    }
+
     /// Convert a drag rect in display space to a screen-space region.
     fn drag_to_region(&self, a: egui::Pos2, b: egui::Pos2) -> Option<ScreenRegion> {
         let preview = self.preview.as_ref()?;
-        let shown = fit_into(
-            egui::Vec2::new(preview.data.width as f32, preview.data.height as f32),
-            PREVIEW_AVAIL,
-        );
-        let origin_disp = egui::pos2(
-            (PREVIEW_AVAIL.x - shown.x) / 2.0,
-            (PREVIEW_AVAIL.y - shown.y) / 2.0,
-        );
-        let to_img = |p: egui::Pos2| -> Option<(u32, u32)> {
-            let px = (p.x - origin_disp.x) / shown.x * preview.data.width as f32;
-            let py = (p.y - origin_disp.y) / shown.y * preview.data.height as f32;
-            if px < 0.0
-                || py < 0.0
-                || px > preview.data.width as f32
-                || py > preview.data.height as f32
-            {
-                return None;
-            }
-            Some((px as u32, py as u32))
-        };
-        let (x0, y0) = to_img(a.min(b))?;
-        let (x1, y1) = to_img(a.max(b))?;
+        let (x0, y0) = self.display_to_image(a.min(b))?;
+        let (x1, y1) = self.display_to_image(a.max(b))?;
         let w = x1.saturating_sub(x0).max(1);
         let h = y1.saturating_sub(y0).max(1);
+        // Screen coordinates; the config region type is non-negative, so clamp
+        // origins left/above the primary monitor.
         Some(ScreenRegion {
-            x: preview.data.origin.0 + x0,
-            y: preview.data.origin.1 + y0,
+            x: (preview.data.origin.0 + x0 as i32).max(0) as u32,
+            y: (preview.data.origin.1 + y0 as i32).max(0) as u32,
             width: w,
             height: h,
         })
     }
 
-    fn save_dragged_region(&mut self) {
-        let Some((a, b)) = self.drag else { return };
-        self.drag = None;
-        let Some(region) = self.drag_to_region(a, b) else {
-            self.push("drag was outside the captured image — try again");
-            return;
-        };
-        let target = self.region_target;
+    /// Display-space point → screen coordinates (for the right-click menu).
+    fn screen_point_of(&self, p: egui::Pos2) -> Option<(i32, i32)> {
+        let preview = self.preview.as_ref()?;
+        let (ix, iy) = self.display_to_image(p)?;
+        Some((
+            preview.data.origin.0 + ix as i32,
+            preview.data.origin.1 + iy as i32,
+        ))
+    }
+
+    /// Write `region` into the settings field for `target` and persist.
+    fn apply_selected_region(&mut self, target: RegionTarget, region: ScreenRegion, what: &str) {
         {
             let mut s = self.app.settings.write();
             match target {
@@ -233,7 +242,7 @@ impl LittleOilGui {
         let path = config_path().unwrap_or_else(|_| "config.json".into());
         match save_config(&path, &settings_snapshot) {
             Ok(()) => self.push(format!(
-                "saved {} region: {}x{} at ({}, {})",
+                "{what} → {} region: {}x{} at ({}, {})",
                 target.label(),
                 region.width,
                 region.height,
@@ -241,6 +250,33 @@ impl LittleOilGui {
                 region.y
             )),
             Err(e) => self.push(format!("saved in memory but config write failed: {e:#}")),
+        }
+    }
+
+    fn save_dragged_region(&mut self) {
+        let Some((a, b)) = self.drag else { return };
+        self.drag = None;
+        let Some(region) = self.drag_to_region(a, b) else {
+            self.push("drag was outside the captured image — try again");
+            return;
+        };
+        let target = self.region_target;
+        self.apply_selected_region(target, region, "drag");
+    }
+
+    /// Right-click menu: select the whole window under the cursor.
+    fn select_whole_window(&mut self, sx: i32, sy: i32) {
+        match self.app.platform().window_under_point(sx, sy) {
+            Some(region) => self.apply_selected_region(self.region_target, region, "window"),
+            None => self.push("no window found under the cursor (unsupported compositor?)"),
+        }
+    }
+
+    /// Right-click menu: select the whole monitor under the cursor.
+    fn select_whole_monitor(&mut self, sx: i32, sy: i32) {
+        match self.app.platform().monitor_under_point(sx, sy) {
+            Some(region) => self.apply_selected_region(self.region_target, region, "monitor"),
+            None => self.push("no monitor found under the cursor"),
         }
     }
 
@@ -323,14 +359,24 @@ impl LittleOilGui {
             }
         });
         ui.add_space(4.0);
-        if let Some(prev) = &self.preview {
-            let (rect, response) = ui.allocate_exact_size(prev.shown, egui::Sense::drag());
-            ui.painter().image(
-                prev.texture.id(),
-                rect,
-                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
-                egui::Color32::WHITE,
-            );
+        ui.label(
+            "Drag to select a region. Right-click the preview to select a whole window or monitor.",
+        );
+        if self.preview.is_some() {
+            // Short borrows only — the interaction handlers below take &mut self.
+            let shown = self.preview.as_ref().map(|p| p.shown).unwrap_or_default();
+            let (rect, response) = ui.allocate_exact_size(shown, egui::Sense::click_and_drag());
+            if let Some(prev) = &mut self.preview {
+                prev.rect = rect;
+            }
+            if let Some(prev) = &self.preview {
+                ui.painter().image(
+                    prev.texture.id(),
+                    rect,
+                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            }
             if response.drag_started() {
                 let pos = response.interact_pointer_pos().unwrap_or_default();
                 self.drag = Some((pos, pos));
@@ -348,6 +394,26 @@ impl LittleOilGui {
                 }
                 self.save_dragged_region();
             }
+            if response.secondary_clicked() {
+                self.right_click_screen = response
+                    .interact_pointer_pos()
+                    .and_then(|p| self.screen_point_of(p));
+            }
+            // Right-click context menu: select the whole window or monitor.
+            response.context_menu(|ui| {
+                if ui.button("Select whole window under cursor").clicked() {
+                    if let Some((sx, sy)) = self.right_click_screen {
+                        self.select_whole_window(sx, sy);
+                    }
+                    ui.close();
+                }
+                if ui.button("Select whole monitor under cursor").clicked() {
+                    if let Some((sx, sy)) = self.right_click_screen {
+                        self.select_whole_monitor(sx, sy);
+                    }
+                    ui.close();
+                }
+            });
             // Draw the drag overlay.
             if let Some((a, b)) = self.drag {
                 let r = egui::Rect::from_two_pos(a, b);

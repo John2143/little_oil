@@ -257,14 +257,152 @@ pub fn screenshot(settings: &Settings) -> Result<ScreenshotData> {
         width: w,
         height: h,
         pixels,
-        origin: (ox as u32, oy as u32),
+        origin: (ox, oy),
     })
+}
+
+/// Full virtual-desktop capture (all monitors composited), no cursor. Used by
+/// the GUI calibration preview. BitBlt of the desktop DC reads the DWM
+/// composited screen; in exclusive-fullscreen games the game surface may read
+/// black — borderless/windowed modes (the PoE default) capture cleanly.
+pub fn capture_desktop() -> Result<ScreenshotData> {
+    unsafe {
+        use windows::Win32::Graphics::Gdi::{
+            BITMAPINFO, BITMAPINFOHEADER, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC,
+            DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, ReleaseDC, SRCCOPY,
+            SelectObject,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+            SM_YVIRTUALSCREEN,
+        };
+        let vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        let vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        let w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        let h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        if w <= 0 || h <= 0 {
+            bail!("virtual screen size is {w}x{h} — cannot capture");
+        }
+
+        let screen_dc = GetDC(None);
+        let mem_dc = CreateCompatibleDC(None);
+        let bmp = CreateCompatibleBitmap(screen_dc, w, h);
+        if screen_dc.is_invalid() || mem_dc.is_invalid() || bmp.is_invalid() {
+            bail!("failed to create desktop capture surfaces");
+        }
+
+        let old = SelectObject(mem_dc, bmp.into());
+        // The screen DC is anchored at the primary monitor's (0,0); the virtual
+        // screen may extend left/up, so offset the source by (-vx, -vy).
+        BitBlt(mem_dc, 0, 0, w, h, Some(screen_dc), -vx, -vy, SRCCOPY).context("BitBlt failed")?;
+
+        let mut bmi = BITMAPINFO::default();
+        bmi.bmiHeader = BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: w,
+            biHeight: -h, // top-down rows
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: 0, // BI_RGB
+            ..Default::default()
+        };
+        let mut pixels = vec![0u8; (w as usize) * (h as usize) * 4];
+        let got = GetDIBits(
+            mem_dc,
+            bmp,
+            0,
+            h as u32,
+            Some(pixels.as_mut_ptr() as *mut core::ffi::c_void),
+            &mut bmi,
+            DIB_RGB_COLORS,
+        );
+        if got == 0 {
+            bail!("GetDIBits failed");
+        }
+
+        // 32bpp BI_RGB is BGRA little-endian; ScreenshotData is RGBA8.
+        for px in pixels.chunks_exact_mut(4) {
+            px.swap(0, 2);
+        }
+
+        let _ = SelectObject(mem_dc, old);
+        let _ = DeleteObject(bmp.into());
+        let _ = DeleteDC(mem_dc);
+        let _ = ReleaseDC(None, screen_dc);
+
+        Ok(ScreenshotData {
+            width: w as usize,
+            height: h as usize,
+            pixels,
+            origin: (vx, vy),
+        })
+    }
 }
 
 /// Full-desktop capture with cursor. Not implemented on Windows — only the
 /// Linux cursor-diff pointer calibration uses it.
 pub fn capture_all() -> Result<ScreenshotData> {
     bail!("capture_all is not implemented on Windows (only used by Linux pointer calibration)")
+}
+
+/// Bounds of the window under a screen point (`WindowFromPoint`).
+pub fn window_under_point(x: i32, y: i32) -> Option<ScreenRegion> {
+    unsafe {
+        use windows::Win32::Foundation::{POINT, RECT};
+        use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, WindowFromPoint};
+        let hwnd = WindowFromPoint(POINT { x, y });
+        if hwnd.is_invalid() {
+            return None;
+        }
+        let mut r = RECT::default();
+        if GetWindowRect(hwnd, &mut r as *mut _).is_err() {
+            return None;
+        }
+        clamp_region(r.left, r.top, r.right - r.left, r.bottom - r.top)
+    }
+}
+
+/// Bounds of the monitor under a screen point (`MonitorFromPoint`).
+pub fn monitor_under_point(x: i32, y: i32) -> Option<ScreenRegion> {
+    unsafe {
+        use windows::Win32::Foundation::POINT;
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
+        };
+        let hmon = MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST);
+        if hmon.is_invalid() {
+            return None;
+        }
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if GetMonitorInfoW(hmon, &mut info as *mut _).as_bool() == false {
+            return None;
+        }
+        let r = info.rcMonitor;
+        clamp_region(r.left, r.top, r.right - r.left, r.bottom - r.top)
+    }
+}
+
+/// Clamp window/monitor bounds into the non-negative `ScreenRegion` type.
+fn clamp_region(x: i32, y: i32, w: i32, h: i32) -> Option<ScreenRegion> {
+    if w <= 0 || h <= 0 {
+        return None;
+    }
+    let x0 = x.max(0) as u32;
+    let y0 = y.max(0) as u32;
+    let x1 = (x + w).max(0) as u32;
+    let y1 = (y + h).max(0) as u32;
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    Some(ScreenRegion {
+        x: x0,
+        y: y0,
+        width: x1 - x0,
+        height: y1 - y0,
+    })
 }
 
 pub fn select_region(prompt: &str) -> Result<ScreenRegion> {
