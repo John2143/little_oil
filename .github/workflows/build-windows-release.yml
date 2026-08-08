@@ -11,6 +11,7 @@ name: build-windows-release
 on:
   push:
     branches: [master]
+    tags: ['v*']
   workflow_dispatch:
 
 jobs:
@@ -43,3 +44,22 @@ jobs:
           name: little_oil-windows-x86_64
           path: little_oil-windows-x86_64.zip
           if-no-files-found: error
+
+      - name: Attach to release (version tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The AppImage workflow creates the release; retry in case this job
+          # runs first.
+          attempt=0
+          until gh release upload "$TAG" little_oil-windows-x86_64.zip --clobber; do
+            attempt=$((attempt + 1))
+            if [ "$attempt" -ge 10 ]; then
+              echo "release upload failed after 10 attempts" >&2
+              exit 1
+            fi
+            sleep 6
+          done
