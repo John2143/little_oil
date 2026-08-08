@@ -33,6 +33,7 @@ jobs:
             curl ca-certificates git build-essential pkg-config file jq gh \
             squashfs-tools desktop-file-utils \
             libudev-dev libfontconfig1-dev libgl1-mesa-dev libxkbcommon-dev \
+            libxkbcommon-x11-0 \
             libwayland-dev libx11-dev libxcb1-dev libxcb-util-dev \
             libxcb-cursor-dev libxcb-image0-dev libxcb-keysyms1-dev \
             libxcb-render-util0-dev libxcb-ewmh-dev libxcb-icccm4-dev
