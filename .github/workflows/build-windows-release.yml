@@ -51,6 +51,7 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: John2143/little_oil
         run: |
           # The AppImage workflow creates the release; retry in case this job
           # runs first.
