@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Little Oil
+Comment=Path of Exile automation
+Exec=little_oil
+Icon=little_oil
+Categories=Game;Utility;
+Terminal=false

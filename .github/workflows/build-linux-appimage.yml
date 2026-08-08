@@ -1,0 +1,91 @@
+name: build-linux-appimage
+
+# Builds a Linux AppImage (x86_64) on every push to master and on version
+# tags (v*). The AppImage is always kept as a workflow artifact; when a v*
+# tag is pushed, it is also attached to the GitHub Release of that tag.
+#
+# Built inside an ubuntu:22.04 container so the AppImage links glibc 2.35:
+# runnable on Ubuntu 22.04+, Debian 12+, Fedora 37+, Arch, etc. (not on
+# Ubuntu 20.04 / Debian 11). The bundle carries the Wayland/X11 client libs
+# that winit dlopens; libGL and glibc are intentionally left to the host.
+#
+# No `permissions:` block: this repo's default workflow token already has
+# contents:write (the legacy rust.yml release steps prove it). If a future
+# `gh release create` fails with 403, add `permissions: contents: write`.
+
+on:
+  push:
+    branches: [ master ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y \
+            curl ca-certificates git build-essential pkg-config file jq gh \
+            squashfs-tools desktop-file-utils \
+            libudev-dev libfontconfig1-dev libgl1-mesa-dev libxkbcommon-dev \
+            libwayland-dev libx11-dev libxcb1-dev libxcb-util-dev \
+            libxcb-cursor-dev libxcb-image0-dev libxcb-keysyms1-dev \
+            libxcb-render-util0-dev libxcb-wm0-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Resolve version
+        run: |
+          VER="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "little_oil") | .version')"
+          echo "VER=$VER" >> "$GITHUB_ENV"
+
+      - name: Download AppImage tooling
+        run: |
+          curl -L -o linuxdeploy-x86_64.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -L -o appimagetool-x86_64.AppImage \
+            https://github.com/AppImage/appimagetool/releases/continuous/appimagetool-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage appimagetool-x86_64.AppImage
+
+      - name: Package AppImage
+        run: |
+          PATH="$PWD:$PATH" ./linuxdeploy-x86_64.AppImage --appimage-extract-and-run \
+            --appdir AppDir \
+            --executable target/release/little_oil \
+            --desktop-file assets/little_oil.desktop \
+            --icon-file assets/little_oil.png \
+            --library /usr/lib/x86_64-linux-gnu/libwayland-client.so.0 \
+            --library /usr/lib/x86_64-linux-gnu/libxkbcommon.so.0 \
+            --library /usr/lib/x86_64-linux-gnu/libxkbcommon-x11.so.0 \
+            --library /usr/lib/x86_64-linux-gnu/libxcb-cursor.so.0 \
+            --library /usr/lib/x86_64-linux-gnu/libxcb-util.so.1 \
+            --library /usr/lib/x86_64-linux-gnu/libxcb-image.so.0 \
+            --library /usr/lib/x86_64-linux-gnu/libxcb-keysyms.so.1 \
+            --library /usr/lib/x86_64-linux-gnu/libxcb-render-util.so.0 \
+            --library /usr/lib/x86_64-linux-gnu/libxcb-wm.so.0 \
+            --output appimage
+          artifact="$(find . -maxdepth 1 -name '*.AppImage' ! -name 'linuxdeploy-*' ! -name 'appimagetool-*')"
+          mv "$artifact" "little_oil-${VER}-x86_64.AppImage"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: little_oil-appimage
+          path: little_oil-*.AppImage
+          if-no-files-found: error
+
+      - name: Attach to release (version tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" --title "Little Oil $TAG" --generate-notes --latest || true
+          gh release upload "$TAG" "little_oil-${VER}-x86_64.AppImage" --clobber
