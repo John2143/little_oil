@@ -35,7 +35,7 @@ jobs:
             libudev-dev libfontconfig1-dev libgl1-mesa-dev libxkbcommon-dev \
             libwayland-dev libx11-dev libxcb1-dev libxcb-util-dev \
             libxcb-cursor-dev libxcb-image0-dev libxcb-keysyms1-dev \
-            libxcb-render-util0-dev libxcb-wm0-dev
+            libxcb-render-util0-dev libxcb-ewmh-dev libxcb-icccm4-dev
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -63,14 +63,12 @@ jobs:
             --desktop-file assets/little_oil.desktop \
             --icon-file assets/little_oil.png \
             --library /usr/lib/x86_64-linux-gnu/libwayland-client.so.0 \
+            --library /usr/lib/x86_64-linux-gnu/libwayland-egl.so.1 \
             --library /usr/lib/x86_64-linux-gnu/libxkbcommon.so.0 \
             --library /usr/lib/x86_64-linux-gnu/libxkbcommon-x11.so.0 \
-            --library /usr/lib/x86_64-linux-gnu/libxcb-cursor.so.0 \
-            --library /usr/lib/x86_64-linux-gnu/libxcb-util.so.1 \
-            --library /usr/lib/x86_64-linux-gnu/libxcb-image.so.0 \
-            --library /usr/lib/x86_64-linux-gnu/libxcb-keysyms.so.1 \
-            --library /usr/lib/x86_64-linux-gnu/libxcb-render-util.so.0 \
-            --library /usr/lib/x86_64-linux-gnu/libxcb-wm.so.0 \
+            --library /usr/lib/x86_64-linux-gnu/libxcb.so.1 \
+            --library /usr/lib/x86_64-linux-gnu/libX11.so.6 \
+            --library /usr/lib/x86_64-linux-gnu/libX11-xcb.so.1 \
             --output appimage
           artifact="$(find . -maxdepth 1 -name '*.AppImage' ! -name 'linuxdeploy-*' ! -name 'appimagetool-*')"
           mv "$artifact" "little_oil-${VER}-x86_64.AppImage"
