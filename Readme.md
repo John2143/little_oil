@@ -15,6 +15,7 @@ Every push to `master` builds the Windows exe automatically — grab it from
 `little_oil-windows-x86_64`**. Unzip anywhere and run `little_oil.exe`.
 Windows 10 2004+ is required (WGC). No extra runtime DLLs, no installer, no
 admin rights.
+On tagged releases (`v*`), the zip is also attached to the GitHub Release page.
 
 Build your own on a Windows machine (MSVC toolchain, the most conventional
 distribution build):
@@ -50,6 +51,28 @@ Settings tab → *Open config folder*).
   pixels. If the game runs at 100% scale everything matches the calibrations.
 - `set-region`/`select_region` (slurp) are Linux-only; on Windows do region
   selection from the GUI drag-select.
+
+## Linux
+
+### Install (AppImage)
+
+Prebuilt AppImages are attached to tagged releases. Download
+`little_oil-<version>-x86_64.AppImage` from the
+[latest release](https://github.com/John2143/little_oil/releases/latest),
+then:
+
+```sh
+chmod +x little_oil-0.1.0-x86_64.AppImage
+./little_oil-0.1.0-x86_64.AppImage            # needs libfuse2 on some distros
+./little_oil-0.1.0-x86_64.AppImage --appimage-extract-and-run   # fallback without FUSE
+```
+
+The AppImage bundles the app and its Wayland/X11 GUI libraries. It needs a
+glibc of 2.35 or newer (Ubuntu 22.04+, Debian 12+, Fedora 37+, Arch) — and
+the system tools and permissions under
+[Requirements (Linux)](#requirements-linux) below are still required.
+
+Build your own with the nix flake or `cargo build --release`.
 
 ## Requirements (Linux)
 
