@@ -87,6 +87,7 @@ jobs:
           TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
+          GH_REPO: John2143/little_oil
         run: |
           # jammy's gh (2.17) has no --latest/--clobber; new non-draft releases
           # are Latest by default.
