@@ -56,14 +56,10 @@ function Fail([string]$message) {
     exit 1
 }
 
-Add-Type -AssemblyName System.Drawing
-# Reference the loaded drawing assembly by path: `-ReferencedAssemblies
-# System.Drawing` does not resolve on every PowerShell 7 install.
-$drawingAssembly = [System.Drawing.Bitmap].Assembly.Location
+# Pure user32/gdi32 P/Invoke: System.Drawing on PowerShell 7 / .NET 8 needs
+# extra assembly references (`IImage` lives in a private assembly).
 Add-Type -TypeDefinition @'
 using System;
-using System.Drawing;
-using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 
 public static class WinProbe {
@@ -85,37 +81,57 @@ public static class WinProbe {
     [DllImport("user32.dll")]
     public static extern IntPtr SetProcessDpiAwarenessContext(IntPtr context);
 
+    [StructLayout(LayoutKind.Sequential)]
+    struct BITMAPINFOHEADER {
+        public int biSize, biWidth, biHeight;
+        public short biPlanes, biBitCount;
+        public int biCompression, biSizeImage, biXPelsPerMeter, biYPelsPerMeter, biClrUsed, biClrImportant;
+    }
+
+    [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
+    [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr dc);
+    [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleBitmap(IntPtr dc, int w, int h);
+    [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
+    [DllImport("gdi32.dll")] static extern bool BitBlt(IntPtr dst, int x, int y, int w, int h, IntPtr src, int sx, int sy, int rop);
+    [DllImport("gdi32.dll")] static extern int GetDIBits(IntPtr dc, IntPtr bmp, uint start, uint lines, byte[] bits, ref BITMAPINFOHEADER bmi, uint usage);
+    [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr obj);
+    [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
+
     // Count pixels of the screen region (x, y, w, h) whose RGB is within
     // `tolerance` of (r, g, b). GDI BitBlt reads the DWM-composited desktop.
     public static int CountNear(int x, int y, int w, int h, int r, int g, int b, int tolerance) {
-        using (var bitmap = new Bitmap(w, h, PixelFormat.Format32bppArgb)) {
-            using (var graphics = Graphics.FromImage(bitmap)) {
-                graphics.CopyFromScreen(x, y, 0, 0, new Size(w, h));
-            }
-            var data = bitmap.LockBits(
-                new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
-            try {
-                var bytes = new byte[data.Stride * h];
-                Marshal.Copy(data.Scan0, bytes, 0, bytes.Length);
-                int count = 0;
-                for (int row = 0; row < h; row++) {
-                    int offset = row * data.Stride;
-                    for (int col = 0; col < w; col++, offset += 4) {
-                        if (Math.Abs(bytes[offset + 2] - r) <= tolerance &&
-                            Math.Abs(bytes[offset + 1] - g) <= tolerance &&
-                            Math.Abs(bytes[offset] - b) <= tolerance) {
-                            count++;
-                        }
-                    }
+        IntPtr screen = GetDC(IntPtr.Zero);
+        IntPtr mem = CreateCompatibleDC(screen);
+        IntPtr bmp = CreateCompatibleBitmap(screen, w, h);
+        IntPtr old = SelectObject(mem, bmp);
+        try {
+            const int SRCCOPY = 0x00CC0020;
+            if (!BitBlt(mem, 0, 0, w, h, screen, x, y, SRCCOPY)) throw new Exception("BitBlt failed");
+            SelectObject(mem, old);
+            var bmi = new BITMAPINFOHEADER {
+                biSize = Marshal.SizeOf(typeof(BITMAPINFOHEADER)),
+                biWidth = w, biHeight = -h, biPlanes = 1, biBitCount = 32,
+            };
+            var bytes = new byte[w * h * 4];
+            if (GetDIBits(mem, bmp, 0, (uint)h, bytes, ref bmi, 0) == 0) throw new Exception("GetDIBits failed");
+            int count = 0;
+            for (int i = 0; i < bytes.Length; i += 4) {
+                if (Math.Abs(bytes[i + 2] - r) <= tolerance &&
+                    Math.Abs(bytes[i + 1] - g) <= tolerance &&
+                    Math.Abs(bytes[i] - b) <= tolerance) {
+                    count++;
                 }
-                return count;
-            } finally {
-                bitmap.UnlockBits(data);
             }
+            return count;
+        } finally {
+            DeleteObject(bmp);
+            DeleteDC(mem);
+            ReleaseDC(IntPtr.Zero, screen);
         }
     }
 }
-'@ -ReferencedAssemblies $drawingAssembly
+'@
 
 # Physical pixels in GetClientRect/CopyFromScreen, matching little_oil's
 # per-monitor DPI awareness.
