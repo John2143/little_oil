@@ -314,7 +314,7 @@ fn crop(frame: &ScreenshotData, region: ScreenRegion) -> anyhow::Result<Screensh
     let dy = region.y as i64 - frame.origin.1 as i64;
     if dx < 0 || dy < 0 || dx as usize >= frame.width || dy as usize >= frame.height {
         anyhow::bail!(
-            "Game window region starts outside the game window — run: little_oil set-region window"
+            "Game window region starts outside the game window — open the GUI Setup tab or run: little_oil set-region window"
         );
     }
     let (dx, dy) = (dx as usize, dy as usize);
