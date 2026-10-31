@@ -1023,16 +1023,20 @@ fn fit_into(size: egui::Vec2, avail: egui::Vec2) -> egui::Vec2 {
 }
 
 impl eframe::App for LittleOilGui {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(target_os = "windows")]
         self.pump_tray_events();
         #[cfg(target_os = "windows")]
         self.pump_hotkey_events();
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         if self.tab != self.last_tab {
             self.last_tab = self.tab;
             self.health_checks = None; // re-run on next visit to Health
         }
-        egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
+        egui::Panel::top("tabs").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Little Oil");
                 for (tab, hint) in [
@@ -1059,11 +1063,11 @@ impl eframe::App for LittleOilGui {
                 ui.weak(&self.status);
             });
         });
-        egui::CentralPanel::default().show(ctx, |ui| match self.tab {
+        egui::CentralPanel::default().show(ui, |ui| match self.tab {
             "Actions" => self.ui_actions(ui),
-            "Setup" => self.ui_setup(ui, ctx),
-            "Calibrate" => self.ui_calibrate(ui, ctx),
-            "Inventory" => self.ui_inventory(ui, ctx),
+            "Setup" => self.ui_setup(ui, &ctx),
+            "Calibrate" => self.ui_calibrate(ui, &ctx),
+            "Inventory" => self.ui_inventory(ui, &ctx),
             "Health" => self.ui_health(ui),
             _ => self.ui_settings(ui),
         });
@@ -1256,6 +1260,7 @@ pub(crate) fn run(app: Arc<App>) -> Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([920.0, 660.0])
             .with_title("Little Oil"),
+        renderer: eframe::Renderer::Glow,
         ..Default::default()
     };
     eframe::run_native(

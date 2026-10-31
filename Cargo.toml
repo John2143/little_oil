@@ -22,7 +22,7 @@ tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 image = "0.25.9"
 tempfile = "3"
 # egui GUI (`little_oil gui`); tray + global hotkeys are Windows-only deps below.
-eframe = "0.32"
+eframe = { version = "0.37", features = ["glow"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 mouse-keyboard-input = { version = "0.9", default-features = false }
