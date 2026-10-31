@@ -276,6 +276,66 @@ fn check_roll(item_text: &str, config: &AutoRollConfig) -> RollResult {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::path::{Path, PathBuf};
+
+    /// Collects every regular file under `dir`, recursively.
+    fn collect_files(dir: &Path, found: &mut Vec<PathBuf>) {
+        let entries =
+            std::fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()));
+        for entry in entries {
+            let path = entry.expect("directory entry").path();
+            if path.is_dir() {
+                collect_files(&path, found);
+            } else {
+                found.push(path);
+            }
+        }
+    }
+
+    /// Every shipped roll config must be loadable: each file under `rolls/` is a
+    /// `.json` file that deserializes as an `AutoRollConfig`, so `roll
+    /// rolls/<file>.json` cannot fail on a malformed config. All broken files are
+    /// reported in one run instead of stopping at the first.
+    #[test]
+    fn every_roll_config_parses() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("rolls");
+        let mut paths = Vec::new();
+        collect_files(&root, &mut paths);
+        paths.sort();
+
+        assert!(
+            !paths.is_empty(),
+            "no roll configs found under {} — wrong root?",
+            root.display()
+        );
+
+        let mut broken = Vec::new();
+        for path in &paths {
+            let name = path.strip_prefix(&root).unwrap_or(path).display();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                broken.push(format!("{name}: not a .json file"));
+                continue;
+            }
+            let text = match std::fs::read_to_string(path) {
+                Ok(text) => text,
+                Err(e) => {
+                    broken.push(format!("{name}: unreadable: {e}"));
+                    continue;
+                }
+            };
+            if let Err(e) = serde_json::from_str::<AutoRollConfig>(&text) {
+                broken.push(format!("{name}: {e}"));
+            }
+        }
+
+        assert!(
+            broken.is_empty(),
+            "{} of {} roll configs failed to load:\n{}",
+            broken.len(),
+            paths.len(),
+            broken.join("\n")
+        );
+    }
 
     fn trim_lines_start_end(item_text: &str) -> String {
         item_text

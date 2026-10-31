@@ -17,13 +17,10 @@ Windows 10 2004+ is required (WGC). No extra runtime DLLs, no installer, no
 admin rights.
 On tagged releases (`v*`), the zip is also attached to the GitHub Release page.
 
-Build your own on a Windows machine (MSVC toolchain, the most conventional
-distribution build):
-
-Cross-build from the nix dev shell on this machine:
+Build your own on a Windows machine with the MSVC toolchain:
 
 ```sh
-./scripts/build-windows.sh
+cargo build --release --target x86_64-pc-windows-msvc
 ```
 
 ### First run
@@ -62,9 +59,9 @@ Prebuilt AppImages are attached to tagged releases. Download
 then:
 
 ```sh
-chmod +x little_oil-0.1.0-x86_64.AppImage
-./little_oil-0.1.0-x86_64.AppImage            # needs libfuse2 on some distros
-./little_oil-0.1.0-x86_64.AppImage --appimage-extract-and-run   # fallback without FUSE
+chmod +x little_oil-<version>-x86_64.AppImage
+./little_oil-<version>-x86_64.AppImage            # needs libfuse2 on some distros
+./little_oil-<version>-x86_64.AppImage --appimage-extract-and-run   # fallback without FUSE
 ```
 
 The AppImage bundles the app and its Wayland/X11 GUI libraries. It needs a
@@ -85,11 +82,14 @@ Build your own with the nix flake or `cargo build --release`.
 ## Supported compositors
 
 
-Everything goes through standard Wayland protocols — there is no
-compositor-specific code. Tested on **Hyprland**; **niri** works out of the box
-because it implements the same protocols (`wlr-screencopy` per its Screencasting
-wiki page, `layer-shell`, and `zwp_primary_selection` for the clipboard read).
-Any other Wayland compositor implementing those protocols should work too.
+Capture, region selection, clipboard, and input go through standard Wayland
+protocols. Automatic game-window detection and the GUI's right-click "whole
+window / whole monitor" shortcuts call `hyprctl` and only work on Hyprland;
+elsewhere, drag the region by hand. Tested on **Hyprland**; **niri** works out
+of the box because it implements the same protocols (`wlr-screencopy` per its
+Screencasting wiki page, `layer-shell`, and `zwp_primary_selection` for the
+clipboard read). Any other Wayland compositor implementing those protocols
+should work too.
 
 ### niri notes
 
@@ -126,9 +126,12 @@ Any other Wayland compositor implementing those protocols should work too.
 3. Per-layout calibration: `set-region inventory`, `set-region stash`,
    `set-region map`, `calibrate-stash`, `calibrate-map`, `calibrate-currency`
    (or `calibrate-point <name>` per slot), `calibrate-point filter`.
-4. `little_oil roll <chrome-file> <times>` (or `chrome`/`mchrome` in the REPL)
+4. `little_oil roll rolls/<file>.json <times>` (or `chrome`/`mchrome` in the REPL)
    for item rolling; `stash click`, `stash copy`, `empty`, `emptyr` for the
    rest.
+
+Roll configs live in `rolls/`; `mchrome <path>` in the REPL writes a template.
+
 ## Architecture
 
 `App` (src/app.rs) is the single injected context: it owns the settings

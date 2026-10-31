@@ -6,7 +6,6 @@ name: build-windows-release
 #
 # The build runs natively on a Windows runner with the MSVC toolchain — the
 # most conventional distribution build (no mingw runtime concerns).
-# Local cross-build from Linux (mingw): scripts/build-windows.sh
 
 on:
   push:
