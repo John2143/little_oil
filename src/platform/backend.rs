@@ -353,13 +353,13 @@ pub(crate) fn detect_backend(settings: &Settings) -> anyhow::Result<Box<dyn Back
     }
     #[cfg(target_os = "windows")]
     {
-        if let Some(desktop) = settings.desktop {
-            if desktop != Desktop::Windows {
-                anyhow::bail!(
-                    "desktop \"{}\" is not supported on Windows — remove \"desktop\" from the config",
-                    desktop.name()
-                );
-            }
+        if let Some(desktop) = settings.desktop
+            && desktop != Desktop::Windows
+        {
+            anyhow::bail!(
+                "desktop \"{}\" is not supported on Windows — remove \"desktop\" from the config",
+                desktop.name()
+            );
         }
         Ok(Box::new(WindowsBackend::new()?))
     }
