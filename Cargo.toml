@@ -21,6 +21,7 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 tracing-test = "0.2.6"
 image = "0.25.9"
+tempfile = "3"
 # egui GUI (`little_oil gui`); tray + global hotkeys are Windows-only deps below.
 eframe = "0.32"
 

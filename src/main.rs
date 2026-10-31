@@ -160,13 +160,18 @@ pub fn rolls_log_path() -> anyhow::Result<PathBuf> {
 }
 
 pub fn save_config<T: Serialize>(path: &Path, set: &T) -> Result<(), std::io::Error> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut file = fs::File::create(path)?;
-    let json = serde_json::to_string_pretty(&set)
+    let json = serde_json::to_string_pretty(set)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    file.write_all(json.as_bytes())?;
+    // Temp file in the destination directory so the final rename is atomic.
+    let dir = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    fs::create_dir_all(dir)?;
+    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+    tmp.write_all(json.as_bytes())?;
+    tmp.as_file().sync_all()?;
+    tmp.persist(path).map_err(|e| e.error)?;
     Ok(())
 }
 
@@ -185,13 +190,16 @@ where
 
             match x {
                 Ok(settings) => Ok(settings),
-                Err(msg) => bail!("Could not parse settings: {}", msg),
+                Err(msg) => bail!(
+                    "Could not parse {}: {msg} — fix or delete the file",
+                    path.display()
+                ),
             }
         }
         Err(_f) => match default {
             Some(obj) => match save_config(path, &obj) {
                 Ok(_) => Ok(obj.clone()),
-                Err(e) => bail!("Could not write defualt settings: {}", e),
+                Err(e) => bail!("Could not write default settings: {}", e),
             },
             None => bail!("File not found and no default given"),
         },
@@ -211,4 +219,115 @@ fn main() -> anyhow::Result<()> {
     let app = App::new(set)?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     app.run(&args)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Entry names of `dir`, sorted so the assertion does not depend on
+    /// readdir order.
+    fn dir_entries(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .expect("directory must exist")
+            .map(|entry| {
+                entry
+                    .expect("readable directory entry")
+                    .file_name()
+                    .into_string()
+                    .expect("utf-8 file name")
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// `Settings` has no `PartialEq`, so compare the serialized form.
+    fn settings_value(settings: &Settings) -> serde_json::Value {
+        serde_json::to_value(settings).expect("Settings must serialize")
+    }
+
+    #[test]
+    fn save_creates_missing_parent_and_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sub").join("config.json");
+        assert!(
+            !path.parent().unwrap().exists(),
+            "precondition: the parent directory must not exist yet"
+        );
+        let original = default_settings();
+
+        save_config(&path, &original).expect("save_config must create the parent and the file");
+
+        let loaded: Settings = load_config::<Settings>(&path, None).expect("load back");
+        assert_eq!(settings_value(&loaded), settings_value(&original));
+    }
+
+    #[test]
+    fn save_leaves_no_temp_files_beside_the_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("sub");
+        let path = sub.join("config.json");
+
+        save_config(&path, &default_settings()).expect("save_config");
+
+        // The write goes through a same-directory temp file that must be renamed
+        // (or removed), never left behind next to the config.
+        assert_eq!(dir_entries(&sub), vec!["config.json".to_string()]);
+    }
+
+    #[test]
+    fn save_over_existing_file_replaces_its_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("sub");
+        let path = sub.join("config.json");
+        save_config(&path, &default_settings()).expect("initial save");
+
+        let mut modified = default_settings();
+        modified.focus_clicks = 5;
+        modified.pointer_scale = Some(2.0);
+        save_config(&path, &modified).expect("overwrite");
+
+        let loaded: Settings = load_config::<Settings>(&path, None).expect("load back");
+        assert_eq!(settings_value(&loaded), settings_value(&modified));
+        assert_ne!(settings_value(&loaded), settings_value(&default_settings()));
+        assert_eq!(dir_entries(&sub), vec!["config.json".to_string()]);
+    }
+
+    #[test]
+    fn unparseable_config_errors_and_is_left_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let broken = "{ this is not json";
+        fs::write(&path, broken).unwrap();
+
+        // Even with a default available, a corrupt file must be reported rather
+        // than silently replaced: falling back would wipe the calibration that
+        // the user would otherwise repair by hand.
+        let err = load_config::<Settings>(&path, Some(&default_settings()))
+            .expect_err("corrupt config must not load");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("fix or delete the file"),
+            "error must tell the user how to recover, got: {msg}"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), broken);
+    }
+
+    #[test]
+    fn missing_config_is_written_from_the_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("config.json");
+        let default = default_settings();
+
+        let returned = load_config::<Settings>(&path, Some(&default)).expect("load default");
+        assert_eq!(settings_value(&returned), settings_value(&default));
+
+        // The default must be persisted, not just returned: the next run has to
+        // find a real file instead of re-writing the default.
+        assert!(path.is_file(), "default config must be written to disk");
+        let reloaded: Settings =
+            load_config::<Settings>(&path, None).expect("reload written default");
+        assert_eq!(settings_value(&reloaded), settings_value(&default));
+    }
 }

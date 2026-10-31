@@ -2498,6 +2498,7 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
+ "tempfile",
  "tracing",
  "tracing-subscriber",
  "tracing-test",
