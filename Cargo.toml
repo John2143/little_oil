@@ -28,6 +28,7 @@ eframe = { version = "0.37", features = ["glow"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 mouse-keyboard-input = { version = "0.9", default-features = false }
 wl-clipboard-rs = "0.9.3"
+notify-rust = { version = "4.18", default-features = false, features = ["z"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = [

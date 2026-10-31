@@ -190,11 +190,13 @@ impl Backend for WlrBackend {
     }
 
     fn notify(&self, msg: &str) {
-        let note = std::process::Command::new("notify-send")
-            .args(["-u", "low", "Little Oil", msg])
-            .spawn();
-        if let Err(e) = note {
-            tracing::error!(?e, "notify-send failed");
+        if let Err(e) = notify_rust::Notification::new()
+            .summary("Little Oil")
+            .body(msg)
+            .urgency(notify_rust::Urgency::Low)
+            .show()
+        {
+            tracing::error!(?e, "notification failed");
         }
     }
 

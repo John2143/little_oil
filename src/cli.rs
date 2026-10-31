@@ -271,7 +271,15 @@ pub(crate) fn run(app: App, args: &[String]) -> anyhow::Result<()> {
                 .expect("clap validates the region name");
             app.set_region(region.as_str())
         }
-        "keybinds" => bail!("little_oil keybinds is not implemented yet"),
+        "keybinds" => {
+            let desktop = app.desktop();
+            println!("# {}", crate::keybinds::instructions(desktop));
+            println!(
+                "{}",
+                crate::keybinds::snippet(desktop, &crate::keybinds::exe_path())
+            );
+            Ok(())
+        }
         other => match find(other) {
             Some(def) => (def.run)(&app),
             None => {
@@ -347,9 +355,12 @@ fn calibrate_currency(app: &App) -> anyhow::Result<()> {
         "alchemy",
         "exalt",
     ] {
-        crate::app::prompt_enter(&format!(
-            "Open the currency tab if it isn't already. Next point: {name} — press Enter, then drag a box around its slot in the picker."
-        ))?;
+        crate::app::prompt_enter(
+            app,
+            &format!(
+                "Open the currency tab if it isn't already. Next point: {name} — press Enter, then drag a box around its slot in the picker."
+            ),
+        )?;
         app.calibrate_point(name)?;
     }
     Ok(())

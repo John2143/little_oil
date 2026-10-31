@@ -1093,6 +1093,8 @@ impl LittleOilGui {
             #[cfg(target_os = "windows")]
             let _ = std::process::Command::new("explorer").arg(dir).spawn();
         }
+        #[cfg(target_os = "linux")]
+        self.ui_keybinds(ui);
         #[cfg(target_os = "windows")]
         self.ui_hotkeys(ui);
         ui.add_space(10.0);
@@ -1101,6 +1103,28 @@ impl LittleOilGui {
             "little_oil v{} — PoE automation",
             env!("CARGO_PKG_VERSION")
         ));
+    }
+
+    /// Linux-only: ready-to-paste WM keybinds for the detected desktop. The
+    /// snippet names this executable, so the copied lines work as-is.
+    #[cfg(target_os = "linux")]
+    fn ui_keybinds(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(10.0);
+        ui.separator();
+        ui.heading("Keybinds");
+        let desktop = self.app.desktop();
+        ui.label(crate::keybinds::instructions(desktop));
+        let snippet = crate::keybinds::snippet(desktop, &crate::keybinds::exe_path());
+        if ui
+            .button("Copy keybinds")
+            .on_hover_text("Copy the snippet to the clipboard")
+            .clicked()
+        {
+            ui.ctx().copy_text(snippet.clone());
+            self.push("keybind snippet copied");
+        }
+        ui.add_space(4.0);
+        ui.monospace(&snippet);
     }
 
     /// Windows-only: one editable accelerator per registry action. Saving

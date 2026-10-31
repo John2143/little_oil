@@ -20,6 +20,7 @@ mod dicts;
 mod gui;
 mod health;
 pub mod item;
+mod keybinds;
 mod platform;
 mod screenshot;
 mod stash_grid;

@@ -6,8 +6,6 @@ use parking_lot::RwLock;
 use rand::seq::SliceRandom;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
-#[cfg(target_os = "linux")]
-use std::process::Command;
 use tracing::{debug, info};
 
 use crate::auto_roll::{self, AutoRollConfig, AutoRollMod};
@@ -292,7 +290,7 @@ impl App {
         noun: &str,  // "item" | "map"
         save: impl FnOnce(&mut Settings, CellGrid<C, R>),
     ) -> anyhow::Result<()> {
-        prompt_enter(&format!("Open the {label} tab."))?;
+        prompt_enter(self, &format!("Open the {label} tab."))?;
         self.backend.sleep_ms(300);
 
         // Each calibration position is captured twice: first with the item in place
@@ -304,10 +302,13 @@ impl App {
         // changed region; its bounding box is the cell.
         let capture_pos =
             |where_text: &str| -> anyhow::Result<(ScreenshotData, ScreenshotData, Rect, Rect)> {
-                prompt_enter(&format!(
-                    "Put the 1×1 {noun} in the {where_text} slot. In the search box type a \
+                prompt_enter(
+                    self,
+                    &format!(
+                        "Put the 1×1 {noun} in the {where_text} slot. In the search box type a \
                  nonsense string (e.g. \"zzz\") so NOTHING is highlighted."
-                ))?;
+                    ),
+                )?;
                 self.backend.sleep_ms(300);
                 let base = self.screenshot()?;
 
@@ -324,9 +325,12 @@ impl App {
                     height: region.height.min(base.height as u32 - by),
                 };
 
-                prompt_enter(&format!(
-                    "Now search the {noun}'s exact name so ONLY it is highlighted (keep it in the {where_text} slot)."
-                ))?;
+                prompt_enter(
+                    self,
+                    &format!(
+                        "Now search the {noun}'s exact name so ONLY it is highlighted (keep it in the {where_text} slot)."
+                    ),
+                )?;
                 self.backend.sleep_ms(300);
                 let cap = self.screenshot()?;
 
@@ -508,22 +512,12 @@ impl App {
             }
         }
         self.save_settings()?;
-        println!(
+        let message = format!(
             "{name} region saved: {}x{} at ({}, {})",
             region.width, region.height, region.x, region.y
         );
-        #[cfg(target_os = "linux")]
-        let _ = Command::new("notify-send")
-            .args([
-                "-u",
-                "low",
-                "Little Oil",
-                &format!(
-                    "{name} region saved: {}x{} at ({}, {})",
-                    region.width, region.height, region.x, region.y
-                ),
-            ])
-            .spawn();
+        println!("{message}");
+        self.backend.notify(&message);
         Ok(())
     }
 
@@ -937,13 +931,10 @@ fn split_space(input: &str) -> (&str, &str) {
     }
     (input, "")
 }
-/// Print a prompt, mirror it to notify-send on Linux, and block until Enter.
-pub(crate) fn prompt_enter(msg: &str) -> anyhow::Result<()> {
+/// Print a prompt, mirror it to a desktop notification, and block until Enter.
+pub(crate) fn prompt_enter(app: &App, msg: &str) -> anyhow::Result<()> {
     println!("\n>>> {msg}\n    Press Enter when ready...");
-    #[cfg(target_os = "linux")]
-    let _ = Command::new("notify-send")
-        .args(["-u", "critical", "Little Oil — calibration", msg])
-        .spawn();
+    app.backend.notify(msg);
     let mut line = String::new();
     io::stdin().read_line(&mut line)?;
     Ok(())
