@@ -109,7 +109,7 @@ impl Input {
         {
             let _ = (pointer_scale, platform);
             // SetCursorPos takes physical-pixel screen coordinates directly.
-            // SAFETY: pointer-move is always available on Windows.
+            // SAFETY: SetCursorPos takes two integers and no pointers.
             unsafe {
                 use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
                 let _ = SetCursorPos(x, y);
@@ -158,7 +158,7 @@ impl Input {
             }
         }
         #[cfg(target_os = "windows")]
-        unsafe {
+        {
             let _ = platform;
             use windows::Win32::UI::Input::KeyboardAndMouse::{
                 INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
@@ -183,7 +183,11 @@ impl Input {
                     },
                 },
             };
-            SendInput(&[inp], std::mem::size_of::<INPUT>() as i32);
+            // SAFETY: `inp` is a fully initialized INPUT and the size argument is
+            // `size_of::<INPUT>()`, as SendInput requires.
+            unsafe {
+                SendInput(&[inp], std::mem::size_of::<INPUT>() as i32);
+            }
         }
     }
 
@@ -209,7 +213,7 @@ impl Input {
             }
         }
         #[cfg(target_os = "windows")]
-        unsafe {
+        {
             use windows::Win32::UI::Input::KeyboardAndMouse::{
                 INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
                 SendInput, VK_C, VK_CONTROL, VK_MENU,
@@ -234,7 +238,11 @@ impl Input {
                     },
                 },
             };
-            SendInput(&[inp], std::mem::size_of::<INPUT>() as i32);
+            // SAFETY: `inp` is a fully initialized INPUT and the size argument is
+            // `size_of::<INPUT>()`, as SendInput requires.
+            unsafe {
+                SendInput(&[inp], std::mem::size_of::<INPUT>() as i32);
+            }
         }
     }
 }

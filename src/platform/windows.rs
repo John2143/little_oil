@@ -32,6 +32,9 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11CreateDevice, ID3D11Device,
 };
 use windows::Win32::Graphics::Dxgi::{DXGI_MAP_READ, DXGI_MAPPED_RECT, IDXGIDevice, IDXGISurface};
+use windows::Win32::Graphics::Gdi::{
+    DeleteDC, DeleteObject, HBITMAP, HDC, HGDIOBJ, ReleaseDC, SelectObject,
+};
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 use windows::Win32::System::WinRT::Direct3D11::CreateDirect3D11DeviceFromDXGIDevice;
 use windows::core::{BOOL, IInspectable, Interface};
@@ -39,6 +42,8 @@ use windows::core::{BOOL, IInspectable, Interface};
 /// Set DPI awareness so capture and input coordinates are physical pixels.
 /// Call once at startup (main.rs). Fails silently if already set by the host.
 pub fn set_dpi_awareness() {
+    // SAFETY: SetProcessDpiAwarenessContext takes a predefined context
+    // constant and no pointers; failure (already set by the host) is ignored.
     unsafe {
         use windows::Win32::UI::HiDpi::{
             DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
@@ -48,6 +53,8 @@ pub fn set_dpi_awareness() {
 }
 
 fn window_title(hwnd: HWND) -> String {
+    // SAFETY: a stale `hwnd` only makes the calls return 0; `buf` holds
+    // `len + 1` u16s (passed as a slice) and only `..got` is read back.
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{GetWindowTextLengthW, GetWindowTextW};
         let len = GetWindowTextLengthW(hwnd);
@@ -65,6 +72,8 @@ fn window_title(hwnd: HWND) -> String {
 }
 
 unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    // SAFETY: `lparam` is the `&mut Option<HWND>` passed by `find_game_window`,
+    // alive for the synchronous `EnumWindows` call; `class` is passed as a slice.
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, IsWindowVisible};
         let slot = &mut *(lparam.0 as *mut Option<HWND>);
@@ -91,6 +100,8 @@ unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
 
 /// Find the Path of Exile window handle (title or known window class).
 pub fn find_game_window() -> Option<HWND> {
+    // SAFETY: `enum_proc` only casts `lparam` back to `&mut Option<HWND>`, and
+    // `found` outlives the synchronous `EnumWindows` call.
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
         let mut found: Option<HWND> = None;
@@ -101,6 +112,8 @@ pub fn find_game_window() -> Option<HWND> {
 
 /// Client area size and its top-left screen position (physical pixels).
 fn client_rect(hwnd: HWND) -> Result<(u32, u32, i32, i32)> {
+    // SAFETY: `rect` and `pt` are writable locals; a stale `hwnd` makes the
+    // calls fail, and both results are checked.
     unsafe {
         use windows::Win32::Graphics::Gdi::ClientToScreen;
         use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
@@ -123,6 +136,9 @@ struct CaptureDevice {
 }
 
 fn capture_device() -> Result<CaptureDevice> {
+    // SAFETY: COM is initialized for this thread before the D3D/WinRT calls;
+    // `device` is a writable local out-param and the feature-level slice
+    // outlives `D3D11CreateDevice`.
     unsafe {
         // CoInitialize on this thread; RPC_E_CHANGED_MODE (already init) is fine.
         let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
@@ -221,6 +237,8 @@ pub fn screenshot(settings: &Settings) -> Result<ScreenshotData> {
         .cast()
         .context("frame surface is not an IDXGISurface")?;
     let mut mapped = DXGI_MAPPED_RECT::default();
+    // SAFETY: `surface` is the live frame surface and `mapped` a writable local
+    // that `Map` fills; it is unmapped after the copy below.
     unsafe {
         surface
             .Map(&mut mapped, DXGI_MAP_READ)
@@ -232,11 +250,14 @@ pub fn screenshot(settings: &Settings) -> Result<ScreenshotData> {
     let w = cw as usize;
     let h = ch as usize;
     let mut pixels = vec![0u8; w * h * 4];
+    // SAFETY: `mapped.pBits` is valid for `Pitch * height` bytes until `Unmap`;
+    // the pool was created at `cw×ch`, so rows `0..h` of `w*4` bytes are in
+    // bounds.
     unsafe {
         for y in 0..h {
             let row_src = (mapped.pBits as *const u8).add(y * pitch);
             let row_dst = &mut pixels[y * w * 4..(y + 1) * w * 4];
-            for (i, chunk) in row_dst.chunks_exact_mut(4).enumerate() {
+            for (i, chunk) in row_dst.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let b = *row_src.add(i * 4);
                 let g = *row_src.add(i * 4 + 1);
                 let r = *row_src.add(i * 4 + 2);
@@ -266,11 +287,14 @@ pub fn screenshot(settings: &Settings) -> Result<ScreenshotData> {
 /// composited screen; in exclusive-fullscreen games the game surface may read
 /// black — borderless/windowed modes (the PoE default) capture cleanly.
 pub fn capture_desktop() -> Result<ScreenshotData> {
+    // SAFETY: every GDI handle is created here and released exactly once by
+    // `GdiCapture::drop`, on every return path; `pixels` holds `w*h*4` bytes,
+    // exactly the `h` top-down 32-bpp rows `GetDIBits` writes; `bmi` is a
+    // valid local.
     unsafe {
         use windows::Win32::Graphics::Gdi::{
             BITMAPINFO, BITMAPINFOHEADER, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC,
-            DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, ReleaseDC, SRCCOPY,
-            SelectObject,
+            DIB_RGB_COLORS, GetDC, GetDIBits, SRCCOPY,
         };
         use windows::Win32::UI::WindowsAndMessaging::{
             GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
@@ -287,29 +311,48 @@ pub fn capture_desktop() -> Result<ScreenshotData> {
         let screen_dc = GetDC(None);
         let mem_dc = CreateCompatibleDC(None);
         let bmp = CreateCompatibleBitmap(screen_dc, w, h);
-        if screen_dc.is_invalid() || mem_dc.is_invalid() || bmp.is_invalid() {
+        let mut gdi = GdiCapture {
+            screen_dc,
+            mem_dc,
+            bmp,
+            old: None,
+        };
+        if gdi.screen_dc.is_invalid() || gdi.mem_dc.is_invalid() || gdi.bmp.is_invalid() {
             bail!("failed to create desktop capture surfaces");
         }
 
-        let old = SelectObject(mem_dc, bmp.into());
+        gdi.old = Some(SelectObject(gdi.mem_dc, gdi.bmp.into()));
         // The screen DC is anchored at the primary monitor's (0,0); the virtual
         // screen may extend left/up, so offset the source by (-vx, -vy).
-        BitBlt(mem_dc, 0, 0, w, h, Some(screen_dc), -vx, -vy, SRCCOPY).context("BitBlt failed")?;
+        BitBlt(
+            gdi.mem_dc,
+            0,
+            0,
+            w,
+            h,
+            Some(gdi.screen_dc),
+            -vx,
+            -vy,
+            SRCCOPY,
+        )
+        .context("BitBlt failed")?;
 
-        let mut bmi = BITMAPINFO::default();
-        bmi.bmiHeader = BITMAPINFOHEADER {
-            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: w,
-            biHeight: -h, // top-down rows
-            biPlanes: 1,
-            biBitCount: 32,
-            biCompression: 0, // BI_RGB
+        let mut bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w,
+                biHeight: -h, // top-down rows
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: 0, // BI_RGB
+                ..Default::default()
+            },
             ..Default::default()
         };
         let mut pixels = vec![0u8; (w as usize) * (h as usize) * 4];
         let got = GetDIBits(
-            mem_dc,
-            bmp,
+            gdi.mem_dc,
+            gdi.bmp,
             0,
             h as u32,
             Some(pixels.as_mut_ptr() as *mut core::ffi::c_void),
@@ -321,14 +364,9 @@ pub fn capture_desktop() -> Result<ScreenshotData> {
         }
 
         // 32bpp BI_RGB is BGRA little-endian; ScreenshotData is RGBA8.
-        for px in pixels.chunks_exact_mut(4) {
+        for px in pixels.as_chunks_mut::<4>().0 {
             px.swap(0, 2);
         }
-
-        let _ = SelectObject(mem_dc, old);
-        let _ = DeleteObject(bmp.into());
-        let _ = DeleteDC(mem_dc);
-        let _ = ReleaseDC(None, screen_dc);
 
         Ok(ScreenshotData {
             width: w as usize,
@@ -336,6 +374,35 @@ pub fn capture_desktop() -> Result<ScreenshotData> {
             pixels,
             origin: (vx, vy),
         })
+    }
+}
+
+/// Releases the desktop-capture GDI objects on every exit path.
+struct GdiCapture {
+    screen_dc: HDC,
+    mem_dc: HDC,
+    bmp: HBITMAP,
+    old: Option<HGDIOBJ>,
+}
+
+impl Drop for GdiCapture {
+    fn drop(&mut self) {
+        // SAFETY: each handle was created in `capture_desktop` and is released
+        // exactly once here; invalid (null) handles are skipped.
+        unsafe {
+            if let Some(old) = self.old.take() {
+                let _ = SelectObject(self.mem_dc, old);
+            }
+            if !self.bmp.is_invalid() {
+                let _ = DeleteObject(self.bmp.into());
+            }
+            if !self.mem_dc.is_invalid() {
+                let _ = DeleteDC(self.mem_dc);
+            }
+            if !self.screen_dc.is_invalid() {
+                let _ = ReleaseDC(None, self.screen_dc);
+            }
+        }
     }
 }
 
@@ -347,6 +414,8 @@ pub fn capture_all() -> Result<ScreenshotData> {
 
 /// Bounds of the window under a screen point (`WindowFromPoint`).
 pub fn window_under_point(x: i32, y: i32) -> Option<ScreenRegion> {
+    // SAFETY: the point is passed by value and `r` is a writable local; a null
+    // HWND is checked before `GetWindowRect`.
     unsafe {
         use windows::Win32::Foundation::{POINT, RECT};
         use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, WindowFromPoint};
@@ -365,6 +434,8 @@ pub fn window_under_point(x: i32, y: i32) -> Option<ScreenRegion> {
 /// Screen bounds of an HWND (`GetWindowRect`), clamped to the non-negative
 /// quadrant like every other region. Used by `find_game_window` health checks.
 pub fn window_rect(hwnd: HWND) -> Option<ScreenRegion> {
+    // SAFETY: `r` is a writable local; a stale `hwnd` makes `GetWindowRect`
+    // fail, which is checked.
     unsafe {
         use windows::Win32::Foundation::RECT;
         use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
@@ -378,6 +449,8 @@ pub fn window_rect(hwnd: HWND) -> Option<ScreenRegion> {
 
 /// Bounds of the monitor under a screen point (`MonitorFromPoint`).
 pub fn monitor_under_point(x: i32, y: i32) -> Option<ScreenRegion> {
+    // SAFETY: `info` is a writable local with `cbSize` set as `GetMonitorInfoW`
+    // requires; a null monitor handle is checked first.
     unsafe {
         use windows::Win32::Foundation::POINT;
         use windows::Win32::Graphics::Gdi::{
@@ -391,7 +464,7 @@ pub fn monitor_under_point(x: i32, y: i32) -> Option<ScreenRegion> {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
             ..Default::default()
         };
-        if GetMonitorInfoW(hmon, &mut info as *mut _).as_bool() == false {
+        if !GetMonitorInfoW(hmon, &mut info as *mut _).as_bool() {
             return None;
         }
         let r = info.rcMonitor;
@@ -429,6 +502,8 @@ pub fn select_region(prompt: &str) -> Result<ScreenRegion> {
 
 /// Clear the system clipboard.
 pub fn clear_clipboard() -> Result<()> {
+    // SAFETY: the clipboard calls take no pointers; `CloseClipboard` only runs
+    // after `OpenClipboard` succeeded.
     unsafe {
         use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard};
         OpenClipboard(None).context("OpenClipboard failed — clipboard held by another process?")?;
@@ -442,6 +517,9 @@ pub fn clear_clipboard() -> Result<()> {
 pub fn read_clipboard_text() -> Option<String> {
     // CF_UNICODETEXT == 13
     const CF_UNICODETEXT: u32 = 13;
+    // SAFETY: the clipboard is open while `GetClipboardData` runs and closed
+    // after; the HGLOBAL stays locked while `bytes` (`GlobalSize` bytes from the
+    // lock pointer) is read, and `align_to` skips any misaligned prefix.
     unsafe {
         use windows::Win32::System::DataExchange::{
             CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
@@ -460,7 +538,7 @@ pub fn read_clipboard_text() -> Option<String> {
             }
             let size = GlobalSize(hglobal);
             let bytes = std::slice::from_raw_parts(ptr as *const u8, size);
-            let words: &[u16] = &bytes.align_to::<u16>().1;
+            let words: &[u16] = bytes.align_to::<u16>().1;
             let words: Vec<u16> = words.iter().take_while(|w| **w != 0).copied().collect();
             let _ = GlobalUnlock(hglobal);
             Some(String::from_utf16_lossy(&words))
