@@ -76,7 +76,8 @@ impl Input {
     #[cfg(target_os = "linux")]
     pub(crate) fn move_mouse_raw(&mut self, dx: i32, dy: i32) {
         let Input::Linux { device, .. } = self;
-        if let Err(e) = device.move_mouse(dx, dy) {
+        // mouse-keyboard-input 0.9 negates REL_Y; pre-negate so +dy still moves down.
+        if let Err(e) = device.move_mouse(dx, -dy) {
             tracing::error!(?e, "uinput move_mouse failed");
         }
     }
@@ -122,10 +123,7 @@ impl Input {
     /// needs this before each absolute move. Windows is always absolute.
     #[cfg(target_os = "linux")]
     fn pin_cursor_to_origin_impl(this: &mut Input) {
-        let Input::Linux { device, .. } = this;
-        if let Err(e) = device.move_mouse(-50000, -50000) {
-            tracing::error!(?e, "uinput pin-to-origin failed");
-        }
+        this.move_mouse_raw(-50000, -50000);
     }
 
     // ── buttons ─────────────────────────────────────────────────

@@ -25,7 +25,7 @@ tempfile = "3"
 eframe = "0.32"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-mouse-keyboard-input = { rev = "3d53ae6d7430a730908353c1281689f062e4eb0b", git = "https://github.com/John2143/mouse-keyboard-input.git" }
+mouse-keyboard-input = { version = "0.9", default-features = false }
 wl-clipboard-rs = "0.9.3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
