@@ -1,5 +1,5 @@
-//! Platform abstraction: desktop detection, screenshot capture, region
-//! selection, input injection and clipboard I/O.
+//! Platform abstraction: desktop detection, screenshot capture, input
+//! injection and clipboard I/O.
 //!
 //! Everything the commands need is reached through [`Backend`] (see
 //! `backend.rs`); [`Desktop`] says which desktop we are on, so the backend and
@@ -9,6 +9,8 @@
 compile_error!("little_oil only supports Linux and Windows");
 
 pub(crate) mod backend;
+#[cfg(target_os = "linux")]
+pub(crate) mod desktops;
 pub(crate) mod input;
 #[cfg(target_os = "linux")]
 pub(crate) mod virtual_pointer;
@@ -20,7 +22,6 @@ pub(crate) mod windows;
 pub(crate) use backend::{Backend, detect_backend};
 pub(crate) use input::{Input, InputButton, InputKey};
 
-use crate::ScreenRegion;
 use serde::{Deserialize, Serialize};
 
 /// The desktop the process runs on.
@@ -100,21 +101,6 @@ impl Desktop {
 /// Auto-detect the desktop from the real process environment.
 pub(crate) fn detect_desktop() -> Desktop {
     Desktop::detect(&|name| std::env::var(name).ok())
-}
-
-/// Point-and-drag region capture using the desktop's native selector.
-///
-/// Temporary seam: the GUI picker takes over every platform in a later step,
-/// which also removes the per-platform `select_region` implementations.
-pub(crate) fn select_region(prompt: &str) -> anyhow::Result<ScreenRegion> {
-    #[cfg(target_os = "linux")]
-    {
-        wayland::select_region(prompt)
-    }
-    #[cfg(target_os = "windows")]
-    {
-        windows::select_region(prompt)
-    }
 }
 
 #[cfg(test)]

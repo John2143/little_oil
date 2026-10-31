@@ -1,12 +1,13 @@
 //! `little_oil gui` — tray icon (Windows) + settings/calibration panel.
 //!
 //! The panel is an eframe/egui window. Long-running macro actions run on
-//! background threads; results stream into a shared log. On Windows the tray
-//! menu and global hotkeys (F10/F11/F12) trigger the same actions; on Linux
-//! the WM keybinds already do that, so no tray/hotkey is registered there.
+//! background threads; results stream into a shared log. Every surface — this
+//! panel, the Windows tray menu and global hotkeys, and the CLI — is driven by
+//! the registry in [`crate::actions`]. On Linux the WM keybinds replace the
+//! tray/hotkeys, so none are registered there.
 //!
 //! Tabs:
-//! * **Actions** — empty inventory (left/right), recalibrate colors, log.
+//! * **Actions** — one button per registry action, plus the log.
 //! * **Setup** — guided first-run wizard: detect window, drag regions, sample
 //!   inventory colors, calibrate pointer.
 //! * **Calibrate** — capture the game window, drag a rectangle, save it as a
@@ -15,13 +16,16 @@
 //! * **Health** — checkhealth-style diagnostics (also `little_oil doctor`).
 //! * **Settings** — edit region numbers, pointer scale, focus clicks.
 
+use crate::actions::{ACTIONS, Action};
 use crate::app::App;
 use crate::screenshot::ScreenshotData;
 use crate::{ScreenRegion, config_path};
 use anyhow::Result;
 use eframe::egui;
 use parking_lot::Mutex;
+use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -72,6 +76,80 @@ struct Preview {
     rect: egui::Rect,
 }
 
+impl Preview {
+    /// The pure conversion data for drags in this preview.
+    fn geometry(&self) -> PreviewGeometry {
+        PreviewGeometry::new(
+            (self.data.width as u32, self.data.height as u32),
+            self.data.origin,
+            self.shown,
+        )
+    }
+}
+
+/// Geometry of a captured desktop as drawn in a GUI preview: image size in
+/// pixels, the screen coordinate of its top-left pixel, and its display size
+/// in points. All conversions are pure so they can be unit-tested without a
+/// window; drag coordinates are relative to the image's top-left corner.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PreviewGeometry {
+    /// Captured image size in pixels.
+    pub image: (u32, u32),
+    /// Screen coordinate of image pixel (0, 0).
+    pub origin: (i32, i32),
+    /// Display size of the image in points.
+    pub shown: egui::Vec2,
+}
+
+impl PreviewGeometry {
+    pub(crate) fn new(image: (u32, u32), origin: (i32, i32), shown: egui::Vec2) -> Self {
+        Self {
+            image,
+            origin,
+            shown,
+        }
+    }
+
+    /// Image pixel under a display-space point. `None` outside the image or
+    /// for an empty image.
+    pub(crate) fn image_point(&self, at: (f32, f32)) -> Option<(u32, u32)> {
+        let (w, h) = (self.image.0 as f32, self.image.1 as f32);
+        if w <= 0.0 || h <= 0.0 || self.shown.x <= 0.0 || self.shown.y <= 0.0 {
+            return None;
+        }
+        let px = at.0 * w / self.shown.x;
+        let py = at.1 * h / self.shown.y;
+        if !(0.0..=w).contains(&px) || !(0.0..=h).contains(&py) {
+            return None;
+        }
+        Some((px as u32, py as u32))
+    }
+
+    /// Screen coordinate of a display-space point.
+    pub(crate) fn screen_point(&self, at: (f32, f32)) -> Option<(i32, i32)> {
+        let (ix, iy) = self.image_point(at)?;
+        Some((self.origin.0 + ix as i32, self.origin.1 + iy as i32))
+    }
+
+    /// Screen-space region for a drag between two display-space points.
+    ///
+    /// The drag can go in any direction; the result is at least 1×1. Negative
+    /// screen coordinates (a monitor left of / above the primary one) are
+    /// clamped to 0 because [`ScreenRegion`] coordinates are unsigned.
+    pub(crate) fn region_from_drag(&self, a: (f32, f32), b: (f32, f32)) -> Option<ScreenRegion> {
+        let lo = (a.0.min(b.0), a.1.min(b.1));
+        let hi = (a.0.max(b.0), a.1.max(b.1));
+        let (x0, y0) = self.image_point(lo)?;
+        let (x1, y1) = self.image_point(hi)?;
+        Some(ScreenRegion {
+            x: (self.origin.0 + x0 as i32).max(0) as u32,
+            y: (self.origin.1 + y0 as i32).max(0) as u32,
+            width: x1.saturating_sub(x0).max(1),
+            height: y1.saturating_sub(y0).max(1),
+        })
+    }
+}
+
 /// Wizard progress. `step` is the current wizard step index (0..=5).
 struct SetupState {
     step: usize,
@@ -84,9 +162,6 @@ struct SetupState {
     /// per step entry, so a failing capture doesn't spam the log every frame.
     last_captured_step: Option<usize>,
 }
-
-/// A macro action, run on a worker thread by [`ActionRunner`].
-type Action = fn(&App) -> Result<()>;
 
 /// Starts macro actions on worker threads. Cheap to clone into the tray and
 /// hotkey event handlers, which run outside the egui frame callbacks.
@@ -152,6 +227,28 @@ struct LittleOilGui {
     tray: Option<tray_icon::TrayIcon>,
     #[cfg(target_os = "windows")]
     hotkeys: Option<Hotkeys>,
+    /// The binding list the current `hotkeys` manager was built from, so a
+    /// changed setting re-registers exactly once.
+    #[cfg(target_os = "windows")]
+    hotkey_spec: String,
+}
+
+/// Draw one button per registry action and report the ones pressed this frame.
+///
+/// Free function (no `LittleOilGui`) so the Actions tab can be driven by
+/// `egui_kittest` without an eframe window.
+fn action_buttons(ui: &mut egui::Ui, busy: bool, mut on_click: impl FnMut(&'static str, Action)) {
+    ui.horizontal_wrapped(|ui| {
+        for def in ACTIONS {
+            if ui
+                .add_enabled(!busy, egui::Button::new(def.label))
+                .on_hover_text(def.help)
+                .clicked()
+            {
+                on_click(def.id, def.run);
+            }
+        }
+    });
 }
 
 impl LittleOilGui {
@@ -188,6 +285,8 @@ impl LittleOilGui {
             tray: None,
             #[cfg(target_os = "windows")]
             hotkeys: None,
+            #[cfg(target_os = "windows")]
+            hotkey_spec: String::new(),
         };
         this.status = this.summary_line();
         this
@@ -241,45 +340,23 @@ impl LittleOilGui {
         }
     }
 
-    /// Convert a display-space point to image-pixel coords using the rect the
-    /// image is actually drawn in.
-    fn display_to_image(&self, p: egui::Pos2) -> Option<(u32, u32)> {
-        let preview = self.preview.as_ref()?;
-        let rect = preview.rect;
-        let px = (p.x - rect.min.x) / rect.width() * preview.data.width as f32;
-        let py = (p.y - rect.min.y) / rect.height() * preview.data.height as f32;
-        if px < 0.0 || py < 0.0 || px > preview.data.width as f32 || py > preview.data.height as f32
-        {
-            return None;
-        }
-        Some((px as u32, py as u32))
+    /// A display-space point as an offset from the image's top-left corner.
+    fn image_relative(&self, p: egui::Pos2) -> Option<(f32, f32)> {
+        let rect = self.preview.as_ref()?.rect;
+        Some((p.x - rect.min.x, p.y - rect.min.y))
     }
 
     /// Convert a drag rect in display space to a screen-space region.
     fn drag_to_region(&self, a: egui::Pos2, b: egui::Pos2) -> Option<ScreenRegion> {
-        let preview = self.preview.as_ref()?;
-        let (x0, y0) = self.display_to_image(a.min(b))?;
-        let (x1, y1) = self.display_to_image(a.max(b))?;
-        let w = x1.saturating_sub(x0).max(1);
-        let h = y1.saturating_sub(y0).max(1);
-        // Screen coordinates; the config region type is non-negative, so clamp
-        // origins left/above the primary monitor.
-        Some(ScreenRegion {
-            x: (preview.data.origin.0 + x0 as i32).max(0) as u32,
-            y: (preview.data.origin.1 + y0 as i32).max(0) as u32,
-            width: w,
-            height: h,
-        })
+        let a = self.image_relative(a)?;
+        let b = self.image_relative(b)?;
+        self.preview.as_ref()?.geometry().region_from_drag(a, b)
     }
 
     /// Display-space point → screen coordinates (for the right-click menu).
     fn screen_point_of(&self, p: egui::Pos2) -> Option<(i32, i32)> {
-        let preview = self.preview.as_ref()?;
-        let (ix, iy) = self.display_to_image(p)?;
-        Some((
-            preview.data.origin.0 + ix as i32,
-            preview.data.origin.1 + iy as i32,
-        ))
+        let (x, y) = self.image_relative(p)?;
+        self.preview.as_ref()?.geometry().screen_point((x, y))
     }
 
     /// Write `region` into the settings field for `target` and persist.
@@ -336,29 +413,7 @@ impl LittleOilGui {
     fn ui_actions(&mut self, ui: &mut egui::Ui) {
         let busy = self.runner.busy.load(Ordering::Acquire);
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(!busy, egui::Button::new("Empty inventory (left)"))
-                .on_hover_text("Ctrl+click every occupied slot, up to 3 verify passes")
-                .clicked()
-            {
-                self.run_action("empty", |app| app.empty_inv());
-            }
-            if ui
-                .add_enabled(!busy, egui::Button::new("Empty inventory (right)"))
-                .on_hover_text("Same, right-click (emptyr)")
-                .clicked()
-            {
-                self.run_action("emptyr", |app| app.empty_inv_right());
-            }
-            if ui
-                .add_enabled(!busy, egui::Button::new("Recalibrate inventory colors"))
-                .on_hover_text("Re-sample the 60 empty-slot probe colors")
-                .clicked()
-            {
-                self.run_action("recalibrate", |app| app.reset_inv_colors());
-            }
-        });
+        action_buttons(ui, busy, |id, run| self.run_action(id, run));
         ui.add_space(8.0);
         if busy {
             ui.colored_label(egui::Color32::from_rgb(220, 160, 60), "⏳ action running…");
@@ -472,9 +527,14 @@ impl LittleOilGui {
                 egui::Color32::WHITE,
             );
         }
-        if response.drag_started() {
-            let pos = response.interact_pointer_pos().unwrap_or_default();
-            self.drag = Some((pos, pos));
+        if response.drag_started()
+            && let Some(anchor) = ui.input(|i| i.pointer.press_origin())
+        {
+            // Anchor on the press position, not the point where egui decides
+            // the press became a drag (that is already past the threshold, so
+            // a fast drag would start from the wrong corner).
+            let cur = response.interact_pointer_pos().unwrap_or(anchor);
+            self.drag = Some((anchor, cur));
         }
         if response.dragged()
             && let (Some(drag), Some(cur)) = (self.drag.as_mut(), response.interact_pointer_pos())
@@ -695,7 +755,7 @@ impl LittleOilGui {
                     None if self.setup.detect_tried => {
                         ui.colored_label(
                             egui::Color32::from_rgb(220, 160, 60),
-                            "Not found — open the game and retry, or continue and drag it manually.",
+                            "Couldn't detect the game window on this desktop — drag a box around it.",
                         );
                     }
                     None => {}
@@ -789,7 +849,9 @@ impl LittleOilGui {
                     )
                     .clicked()
                 {
-                    self.run_action("recalibrate", |app| app.reset_inv_colors());
+                    let def =
+                        crate::actions::find("reset_inv").expect("reset_inv is a registry action");
+                    self.run_action(def.id, def.run);
                 }
                 ui.add_space(4.0);
                 let n = self
@@ -1031,12 +1093,62 @@ impl LittleOilGui {
             #[cfg(target_os = "windows")]
             let _ = std::process::Command::new("explorer").arg(dir).spawn();
         }
+        #[cfg(target_os = "windows")]
+        self.ui_hotkeys(ui);
         ui.add_space(10.0);
         ui.heading("About");
         ui.label(format!(
             "little_oil v{} — PoE automation",
             env!("CARGO_PKG_VERSION")
         ));
+    }
+
+    /// Windows-only: one editable accelerator per registry action. Saving
+    /// rewrites `settings.hotkeys`; `ensure_hotkeys` re-registers on the next
+    /// frame because the binding list changed.
+    #[cfg(target_os = "windows")]
+    fn ui_hotkeys(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(10.0);
+        ui.separator();
+        ui.heading("Hotkeys");
+        ui.label(
+            "Global shortcuts while Little Oil runs (e.g. F11, ctrl+shift+E). \
+             Clear a field to unbind it.",
+        );
+        let mut map = self.app.settings.read().hotkeys.clone().unwrap_or_default();
+        let mut dirty = false;
+        egui::Grid::new("hotkeys_grid")
+            .num_columns(2)
+            .show(ui, |ui| {
+                for def in ACTIONS {
+                    ui.label(def.label);
+                    let mut value = map
+                        .get(def.id)
+                        .cloned()
+                        .or_else(|| def.default_hotkey.map(str::to_string))
+                        .unwrap_or_default();
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut value)
+                                .desired_width(150.0)
+                                .hint_text("unbound"),
+                        )
+                        .changed()
+                    {
+                        let value = value.trim().to_string();
+                        map.insert(def.id.to_string(), value);
+                        dirty = true;
+                    }
+                    ui.end_row();
+                }
+            });
+        if dirty {
+            self.app.settings.write().hotkeys = if map.is_empty() { None } else { Some(map) };
+            match self.app.save_settings() {
+                Ok(()) => self.push("hotkeys saved"),
+                Err(e) => self.push(format!("config write failed: {e:#}")),
+            }
+        }
     }
 }
 
@@ -1046,6 +1158,72 @@ const PREVIEW_AVAIL: egui::Vec2 = egui::Vec2::new(880.0, 560.0);
 fn fit_into(size: egui::Vec2, avail: egui::Vec2) -> egui::Vec2 {
     let scale = (avail.x / size.x).min(avail.y / size.y).min(1.0);
     size * scale
+}
+
+#[cfg(test)]
+mod actions_tab_tests {
+    use super::*;
+    use crate::test_support::test_app;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    struct TestState {
+        app: Arc<App>,
+        log: Arc<Mutex<GuiState>>,
+        runner: Option<ActionRunner>,
+    }
+
+    /// The Actions tab is generated from the registry: one button per entry,
+    /// and pressing one starts that action (its `▶ <id>…` line reaches the
+    /// shared log).
+    #[test]
+    fn actions_tab_has_a_button_per_registry_action_and_runs_empty() {
+        let (app, _fake) = test_app(crate::default_settings());
+        let log = Arc::new(Mutex::new(GuiState {
+            log: VecDeque::new(),
+        }));
+        let state = TestState {
+            app: Arc::new(app),
+            log: Arc::clone(&log),
+            runner: None,
+        };
+
+        let mut harness = Harness::new_ui_state(
+            |ui, st: &mut TestState| {
+                if st.runner.is_none() {
+                    st.runner = Some(ActionRunner {
+                        app: Arc::clone(&st.app),
+                        state: Arc::clone(&st.log),
+                        busy: Arc::new(AtomicBool::new(false)),
+                        ctx: ui.ctx().clone(),
+                    });
+                }
+                let runner = st
+                    .runner
+                    .as_ref()
+                    .expect("runner initialized on the first frame")
+                    .clone();
+                action_buttons(ui, false, |id, run| runner.run(id, run));
+            },
+            state,
+        );
+
+        // `get_by_label` panics when the label is missing, so this asserts a
+        // button per registry entry.
+        for def in ACTIONS {
+            harness.get_by_label(def.label);
+        }
+
+        harness.get_by_label("Empty inventory (left)").click();
+        harness.run();
+
+        let log = log.lock();
+        assert!(
+            log.log.iter().any(|line| line.starts_with("▶ empty")),
+            "clicking the empty button must start the empty action, log: {:?}",
+            log.log
+        );
+    }
 }
 
 impl eframe::App for LittleOilGui {
@@ -1109,54 +1287,26 @@ impl eframe::App for LittleOilGui {
 #[cfg(target_os = "windows")]
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 
-#[cfg(target_os = "windows")]
-fn act_empty(app: &App) -> Result<()> {
-    app.empty_inv()
-}
-#[cfg(target_os = "windows")]
-fn act_emptyr(app: &App) -> Result<()> {
-    app.empty_inv_right()
-}
-#[cfg(target_os = "windows")]
-fn act_recalibrate(app: &App) -> Result<()> {
-    app.reset_inv_colors()
-}
-
-/// Tray menu id → (log label, action).
-#[cfg(target_os = "windows")]
-const MENU_ACTIONS: [(&str, &str, Action); 3] = [
-    ("empty", "empty", act_empty),
-    ("emptyr", "emptyr", act_emptyr),
-    ("recalibrate", "recalibrate", act_recalibrate),
-];
-
-/// Global hotkey → (log label, action).
-#[cfg(target_os = "windows")]
-const HOTKEY_ACTIONS: [(global_hotkey::hotkey::Code, &str, Action); 3] = [
-    (global_hotkey::hotkey::Code::F10, "emptyr (F10)", act_emptyr),
-    (global_hotkey::hotkey::Code::F11, "empty (F11)", act_empty),
-    (
-        global_hotkey::hotkey::Code::F12,
-        "recalibrate (F12)",
-        act_recalibrate,
-    ),
-];
-
+/// Tray menu: one item per registry action, then Show/Quit.
 #[cfg(target_os = "windows")]
 fn build_menu() -> Result<Menu> {
     let menu = Menu::new();
-    menu.append_items(&[
-        &MenuItem::with_id(MenuId::new("empty"), "Empty inventory (left)", true, None),
-        &MenuItem::with_id(MenuId::new("emptyr"), "Empty inventory (right)", true, None),
-        &MenuItem::with_id(
-            MenuId::new("recalibrate"),
-            "Recalibrate inventory colors",
+    for def in ACTIONS {
+        menu.append(&MenuItem::with_id(
+            MenuId::new(def.id),
+            def.label,
             true,
             None,
-        ),
-        &PredefinedMenuItem::separator(),
-        &PredefinedMenuItem::quit(None),
-    ])?;
+        ))?;
+    }
+    menu.append(&PredefinedMenuItem::separator())?;
+    menu.append(&MenuItem::with_id(
+        MenuId::new("show"),
+        "Show window",
+        true,
+        None,
+    ))?;
+    menu.append(&PredefinedMenuItem::quit(None))?;
     Ok(menu)
 }
 
@@ -1198,8 +1348,15 @@ impl LittleOilGui {
         // creation retries) are ignored.
         let runner = self.runner.clone();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-            if let Some((_, label, f)) = MENU_ACTIONS.iter().find(|(id, _, _)| event.id == *id) {
-                runner.run(label, *f);
+            if event.id == "show" {
+                runner
+                    .ctx
+                    .send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                runner.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                return;
+            }
+            if let Some(def) = ACTIONS.iter().find(|def| event.id == def.id) {
+                runner.run(def.id, def.run);
             }
         }));
         let menu = match build_menu() {
@@ -1230,27 +1387,92 @@ impl LittleOilGui {
         }
     }
 
+    /// Register the global hotkeys: `settings.hotkeys` overrides, registry
+    /// defaults otherwise. Re-registers (dropping the old manager) whenever the
+    /// binding list changes, so saving the Settings tab takes effect at once.
     fn ensure_hotkeys(&mut self) {
-        if self.hotkeys.is_some() {
-            return;
-        }
         use global_hotkey::hotkey::HotKey;
         use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
+        use std::str::FromStr;
+
+        // Desired accelerators in registry order (first wins on duplicates).
+        let mut desired: Vec<(&'static str, String)> = Vec::new();
+        let mut unknown: Vec<String> = Vec::new();
+        {
+            let settings = self.app.settings.read();
+            if let Some(map) = &settings.hotkeys {
+                for id in map.keys() {
+                    if ACTIONS.iter().all(|def| def.id != id) {
+                        unknown.push(id.clone());
+                    }
+                }
+            }
+            for def in ACTIONS {
+                let configured = settings
+                    .hotkeys
+                    .as_ref()
+                    .and_then(|map| map.get(def.id))
+                    .map(|s| s.trim().to_string());
+                let accel = match configured {
+                    // An explicitly cleared field unbinds the action.
+                    Some(s) if s.is_empty() => continue,
+                    Some(s) => s,
+                    None => match def.default_hotkey {
+                        Some(default) => default.to_string(),
+                        None => continue,
+                    },
+                };
+                desired.push((def.id, accel));
+            }
+        }
+        let spec = format!(
+            "{}|unknown={}",
+            desired
+                .iter()
+                .map(|(id, accel)| format!("{id}={accel}"))
+                .collect::<Vec<_>>()
+                .join(","),
+            unknown.join(",")
+        );
+        if self.hotkeys.is_some() && self.hotkey_spec == spec {
+            return;
+        }
+
+        // Drop the old manager first so its registrations are released.
+        self.hotkeys = None;
+        self.hotkey_spec = spec;
+        for id in &unknown {
+            tracing::warn!("hotkey {id}: unknown action id");
+        }
+
         let Ok(manager) = GlobalHotKeyManager::new() else {
             tracing::warn!("global hotkey manager unavailable");
             return;
         };
-        let mut ids: Vec<(u32, &'static str, Action)> = Vec::new();
-        for (code, label, f) in HOTKEY_ACTIONS {
-            let hk = HotKey::new(None, code);
-            if manager.register(hk).is_ok() {
-                ids.push((hk.id(), label, f));
+        let mut registered: Vec<(u32, &'static str, Action)> = Vec::new();
+        let mut used: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+        for (id, accel) in &desired {
+            let hotkey = match HotKey::from_str(accel) {
+                Ok(hotkey) => hotkey,
+                Err(e) => {
+                    tracing::warn!("hotkey {id}: {e}");
+                    continue;
+                }
+            };
+            if !used.insert(hotkey.id()) {
+                tracing::warn!("hotkey {id}: {accel:?} is already bound to another action");
+                continue;
             }
+            let Some(def) = ACTIONS.iter().find(|def| def.id == *id) else {
+                continue;
+            };
+            if manager.register(hotkey).is_err() {
+                tracing::warn!("hotkey {id}: the system refused to register {accel:?}");
+                continue;
+            }
+            registered.push((hotkey.id(), def.id, def.run));
         }
-        tracing::info!(
-            count = ids.len(),
-            "registered global hotkeys (F10 emptyr, F11 empty, F12 recalibrate)"
-        );
+        tracing::info!(count = registered.len(), "registered global hotkeys");
         // Like the tray handler, this runs from WM_HOTKEY in the manager's
         // hidden window, independent of egui repaints. No event can arrive
         // before it is installed: WM_HOTKEY is only delivered when the message
@@ -1260,7 +1482,7 @@ impl LittleOilGui {
             if event.state != HotKeyState::Pressed {
                 return;
             }
-            if let Some((_, label, f)) = ids.iter().find(|(id, _, _)| *id == event.id) {
+            if let Some((_, label, f)) = registered.iter().find(|(id, _, _)| *id == event.id) {
                 runner.run(label, *f);
             }
         }));
@@ -1290,4 +1512,357 @@ pub(crate) fn run(app: Arc<App>) -> Result<()> {
         Box::new(move |cc| Ok(Box::new(LittleOilGui::new(cc, app)))),
     )
     .map_err(|e| anyhow::anyhow!("GUI error: {e}"))
+}
+
+// ── region picker (set-region, calibrate-point) ──────────────────
+
+/// Single-purpose window: shows a fresh desktop capture, lets the user drag a
+/// box (or right-click a whole window/monitor), and closes with the chosen
+/// screen region. Enter or "Save selection" accepts; Esc or the close button
+/// cancels.
+struct RegionPicker<'a> {
+    app: &'a App,
+    prompt: &'a str,
+    /// `Some(region)` once the user picked one; `None` means cancelled.
+    outcome: Rc<RefCell<Option<ScreenRegion>>>,
+    preview: Option<Preview>,
+    /// Desktop capture taken before the window existed; turned into a texture
+    /// on the first frame (egui only accepts large textures once the renderer
+    /// is initialized).
+    capture: Option<ScreenshotData>,
+    drag: Option<(egui::Pos2, egui::Pos2)>,
+    right_click_screen: Option<(i32, i32)>,
+    status: String,
+}
+
+impl<'a> RegionPicker<'a> {
+    /// `data` is the desktop capture taken *before* this window was created,
+    /// so the picker shows the screen as it was and the window itself is not
+    /// in the image.
+    fn new(
+        app: &'a App,
+        prompt: &'a str,
+        outcome: Rc<RefCell<Option<ScreenRegion>>>,
+        data: ScreenshotData,
+    ) -> Self {
+        Self {
+            app,
+            prompt,
+            outcome,
+            preview: None,
+            capture: Some(data),
+            drag: None,
+            right_click_screen: None,
+            status: String::new(),
+        }
+    }
+
+    /// Turn the stored capture into a texture. Runs on the first frame, when
+    /// egui knows the renderer's maximum texture size (a multi-monitor desktop
+    /// capture is larger than the 2048 px default available at window
+    /// creation).
+    fn ensure_preview(&mut self, ctx: &egui::Context) {
+        let Some(data) = self.capture.take() else {
+            return;
+        };
+        if data.width == 0 || data.height == 0 {
+            self.status = "desktop capture returned an empty image".into();
+            return;
+        }
+        let size = egui::Vec2::new(data.width as f32, data.height as f32);
+        let color =
+            egui::ColorImage::from_rgba_unmultiplied([data.width, data.height], &data.pixels);
+        let texture = ctx.load_texture("region-picker", color, egui::TextureOptions::NEAREST);
+        self.status = format!(
+            "captured desktop {}x{} (origin {}, {})",
+            data.width, data.height, data.origin.0, data.origin.1
+        );
+        self.preview = Some(Preview {
+            data,
+            texture,
+            shown: size,
+            rect: egui::Rect::ZERO,
+        });
+    }
+
+    fn finish(&mut self, region: ScreenRegion, ctx: &egui::Context) {
+        *self.outcome.borrow_mut() = Some(region);
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    fn cancel(&mut self, ctx: &egui::Context) {
+        *self.outcome.borrow_mut() = None;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    /// The screen region for the current drag, if any.
+    fn drag_region(&self) -> Option<ScreenRegion> {
+        let preview = self.preview.as_ref()?;
+        let (a, b) = self.drag?;
+        let rect = preview.rect;
+        preview.geometry().region_from_drag(
+            (a.x - rect.min.x, a.y - rect.min.y),
+            (b.x - rect.min.x, b.y - rect.min.y),
+        )
+    }
+
+    fn confirm(&mut self, ctx: &egui::Context) {
+        match self.drag_region() {
+            Some(region) => self.finish(region, ctx),
+            None => {
+                self.status = "drag a box first (or right-click for a whole window/monitor)".into();
+            }
+        }
+    }
+
+    fn draw(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let Some(preview) = self.preview.as_ref() else {
+            ui.weak(&self.status);
+            return;
+        };
+        let image_size = egui::Vec2::new(preview.data.width as f32, preview.data.height as f32);
+        let texture = preview.texture.id();
+        let shown = fit_into(image_size, ui.available_size());
+        let (rect, response) = ui.allocate_exact_size(shown, egui::Sense::click_and_drag());
+        if let Some(preview) = self.preview.as_mut() {
+            preview.shown = shown;
+            preview.rect = rect;
+        }
+        ui.painter().image(
+            texture,
+            rect,
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+
+        if response.drag_started()
+            && let Some(anchor) = ui.input(|i| i.pointer.press_origin())
+        {
+            // Anchor on the press position, not the point where egui decides
+            // the press became a drag (that is already past the threshold, so
+            // a fast drag would start from the wrong corner).
+            let cur = response.interact_pointer_pos().unwrap_or(anchor);
+            self.drag = Some((anchor, cur));
+        }
+        if response.dragged()
+            && let (Some(drag), Some(cur)) = (self.drag.as_mut(), response.interact_pointer_pos())
+        {
+            drag.1 = cur;
+        }
+        if response.drag_stopped()
+            && let Some(cur) = response.interact_pointer_pos()
+        {
+            let anchor = self.drag.unwrap_or((cur, cur)).0;
+            self.drag = Some((anchor, cur));
+            self.status = "press Enter or \"Save selection\" to save this box".into();
+        }
+        if response.secondary_clicked() {
+            self.right_click_screen = response.interact_pointer_pos().and_then(|p| {
+                let preview = self.preview.as_ref()?;
+                let rect = preview.rect;
+                preview
+                    .geometry()
+                    .screen_point((p.x - rect.min.x, p.y - rect.min.y))
+            });
+        }
+        // Right-click menu: select the whole window or monitor under the cursor.
+        response.context_menu(|ui| {
+            if ui.button("Select whole window under cursor").clicked() {
+                if let Some((sx, sy)) = self.right_click_screen {
+                    match self.app.backend().window_at(sx, sy) {
+                        Some(region) => self.finish(region, ctx),
+                        None => self.status = "no window found under the cursor".into(),
+                    }
+                }
+                ui.close();
+            }
+            if ui.button("Select whole monitor under cursor").clicked() {
+                if let Some((sx, sy)) = self.right_click_screen {
+                    match self.app.backend().monitor_at(sx, sy) {
+                        Some(region) => self.finish(region, ctx),
+                        None => self.status = "no monitor found under the cursor".into(),
+                    }
+                }
+                ui.close();
+            }
+        });
+        if let Some((a, b)) = self.drag {
+            let r = egui::Rect::from_two_pos(a, b);
+            ui.painter().rect_stroke(
+                r,
+                0.0,
+                egui::Stroke::new(2.0_f32, egui::Color32::LIGHT_BLUE),
+                egui::StrokeKind::Outside,
+            );
+            if let Some(region) = self.drag_region() {
+                ui.painter().text(
+                    r.max + egui::vec2(4.0, 0.0),
+                    egui::Align2::LEFT_TOP,
+                    format!(
+                        "{}x{} at ({}, {})",
+                        region.width, region.height, region.x, region.y
+                    ),
+                    egui::FontId::monospace(12.0),
+                    egui::Color32::LIGHT_BLUE,
+                );
+            }
+        }
+    }
+}
+
+impl eframe::App for RegionPicker<'_> {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.ensure_preview(&ctx);
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.cancel(&ctx);
+            return;
+        }
+        egui::Panel::top("picker-bar").show(ui, |ui| {
+            ui.label(self.prompt);
+            ui.horizontal(|ui| {
+                if ui.button("Save selection").clicked() {
+                    self.confirm(&ctx);
+                }
+                if ui.button("Cancel").clicked() {
+                    self.cancel(&ctx);
+                }
+                ui.weak(&self.status);
+            });
+            ui.weak("Drag a box around the region. Enter saves, Esc cancels.");
+        });
+        egui::CentralPanel::default().show(ui, |ui| self.draw(ui, &ctx));
+        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+            self.confirm(&ctx);
+        }
+    }
+}
+
+/// Ask the user for a screen region in the GUI picker.
+///
+/// `name` names the region in the window title (`Little Oil — select <name>`);
+/// `prompt` is the instruction shown above the image. Closing the window or
+/// pressing Esc cancels with `region selection cancelled`.
+pub(crate) fn run_region_picker(app: &App, name: &str, prompt: &str) -> Result<ScreenRegion> {
+    // Capture before the window exists so the picker never shows itself.
+    let capture = app.backend().capture_desktop().map_err(|e| {
+        anyhow::anyhow!("desktop capture failed — cannot open the region picker: {e:#}")
+    })?;
+    let title = format!("Little Oil — select {name}");
+    let outcome: Rc<RefCell<Option<ScreenRegion>>> = Rc::new(RefCell::new(None));
+    let shared = Rc::clone(&outcome);
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_maximized(true)
+            .with_title(title.clone()),
+        renderer: eframe::Renderer::Glow,
+        ..Default::default()
+    };
+    eframe::run_native(
+        &title,
+        options,
+        Box::new(move |_cc| Ok(Box::new(RegionPicker::new(app, prompt, shared, capture)))),
+    )
+    .map_err(|e| anyhow::anyhow!("could not open the region picker: {e}"))?;
+    let picked = *outcome.borrow();
+    picked.ok_or_else(|| anyhow::anyhow!("region selection cancelled"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn geom(image: (u32, u32), origin: (i32, i32), shown: (f32, f32)) -> PreviewGeometry {
+        PreviewGeometry::new(image, origin, egui::vec2(shown.0, shown.1))
+    }
+
+    fn region(r: ScreenRegion) -> (u32, u32, u32, u32) {
+        (r.x, r.y, r.width, r.height)
+    }
+
+    #[test]
+    fn drag_at_native_scale_maps_to_screen_coordinates() {
+        let g = geom((1920, 1080), (0, 0), (1920.0, 1080.0));
+        let r = g
+            .region_from_drag((100.0, 50.0), (300.0, 150.0))
+            .expect("drag inside the image");
+        assert_eq!(region(r), (100, 50, 200, 100));
+    }
+
+    #[test]
+    fn drag_in_a_shrunk_preview_maps_back_to_pixels() {
+        // 1920x1080 capture drawn at half size (2 image pixels per point).
+        let g = geom((1920, 1080), (0, 0), (960.0, 540.0));
+        let r = g
+            .region_from_drag((100.0, 25.0), (300.0, 75.0))
+            .expect("drag inside the image");
+        assert_eq!(region(r), (200, 50, 400, 100));
+    }
+
+    #[test]
+    fn fractional_scale_and_negative_origin_clamp_to_zero() {
+        // 1280x720 capture drawn at 1024x576 (0.8 points per pixel) from a
+        // monitor left of and below the primary one.
+        let g = geom((1280, 720), (-1920, 40), (1024.0, 576.0));
+        let r = g
+            .region_from_drag((80.0, 40.0), (400.0, 240.0))
+            .expect("drag inside the image");
+        // image (100, 50)..(500, 300) → x = -1820 clamped to 0, y = 40 + 50.
+        assert_eq!(region(r), (0, 90, 400, 250));
+    }
+
+    #[test]
+    fn positive_monitor_origin_is_added() {
+        let g = geom((1280, 720), (1920, 0), (1280.0, 720.0));
+        let r = g
+            .region_from_drag((10.0, 20.0), (110.0, 120.0))
+            .expect("drag inside the image");
+        assert_eq!(region(r), (1930, 20, 100, 100));
+    }
+
+    #[test]
+    fn reversed_drag_is_normalized() {
+        let g = geom((1920, 1080), (0, 0), (1920.0, 1080.0));
+        let forward = g.region_from_drag((100.0, 50.0), (300.0, 150.0));
+        let reversed = g.region_from_drag((300.0, 150.0), (100.0, 50.0));
+        assert_eq!(
+            forward.map(region),
+            reversed.map(region),
+            "drag direction must not matter"
+        );
+    }
+
+    #[test]
+    fn zero_length_drag_is_one_pixel() {
+        let g = geom((100, 100), (0, 0), (100.0, 100.0));
+        let r = g
+            .region_from_drag((10.0, 10.0), (10.0, 10.0))
+            .expect("a click inside the image");
+        assert_eq!(region(r), (10, 10, 1, 1));
+    }
+
+    #[test]
+    fn drag_outside_the_image_is_rejected() {
+        let g = geom((100, 100), (0, 0), (100.0, 100.0));
+        assert!(g.region_from_drag((50.0, 50.0), (101.0, 60.0)).is_none());
+        assert!(g.region_from_drag((-1.0, 0.0), (10.0, 10.0)).is_none());
+    }
+
+    #[test]
+    fn empty_capture_has_no_geometry() {
+        let g = geom((0, 0), (0, 0), (0.0, 0.0));
+        assert!(g.region_from_drag((0.0, 0.0), (1.0, 1.0)).is_none());
+        assert!(g.image_point((0.0, 0.0)).is_none());
+    }
+
+    #[test]
+    fn screen_point_uses_the_capture_origin() {
+        let g = geom((1920, 1080), (1920, -200), (960.0, 540.0));
+        assert_eq!(g.screen_point((0.0, 0.0)), Some((1920, -200)));
+        assert_eq!(
+            g.screen_point((480.0, 270.0)),
+            Some((1920 + 960, -200 + 540))
+        );
+        assert!(g.screen_point((-5.0, 0.0)).is_none());
+    }
 }

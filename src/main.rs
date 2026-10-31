@@ -4,15 +4,18 @@
 
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::platform::{Desktop, detect_backend};
 
+mod actions;
 mod app;
 mod auto_roll;
 mod chaos_recipe;
+mod cli;
 mod dicts;
 mod gui;
 mod health;
@@ -76,13 +79,18 @@ pub struct Settings {
     /// Named clickable points (currency slots, filter button, …), screen space.
     #[serde(default)]
     pub points: Option<Vec<NamedPoint>>,
+    /// Windows global hotkeys: action id → accelerator (e.g. `"F11"`,
+    /// `"ctrl+shift+E"`). Actions without an entry use their registry default;
+    /// the empty string means "unbind".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hotkeys: Option<BTreeMap<String, String>>,
     /// True once the GUI first-run wizard has been completed. Cosmetic only —
     /// decides which tab the GUI opens on. Old configs load as false via serde.
     #[serde(default)]
     setup_complete: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScreenRegion {
     pub x: u32,
     pub y: u32,
@@ -137,6 +145,7 @@ fn default_settings() -> Settings {
         map_region: None,
         map_grid: None,
         points: None,
+        hotkeys: None,
         setup_complete: false,
     }
 }
@@ -245,7 +254,7 @@ fn main() -> anyhow::Result<()> {
     tracing::debug!(backend = backend.name(), "platform backend");
     let app = App::new(set, backend, config_path);
     let args: Vec<String> = std::env::args().skip(1).collect();
-    app.run(&args)
+    cli::run(app, &args)
 }
 
 #[cfg(test)]

@@ -1,0 +1,12 @@
+[
+  {
+    "at": [-200, -40],
+    "size": [1000, 600],
+    "class": "steam_app_238960",
+    "title": "Path of Exile",
+    "workspace": { "id": 7, "name": "7" },
+    "monitor": 1,
+    "floating": true,
+    "mapped": true
+  }
+]

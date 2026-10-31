@@ -1,0 +1,32 @@
+[
+  {
+    "at": [7, 49],
+    "size": [238, 1384],
+    "class": "Alacritty",
+    "title": "btop ~",
+    "workspace": { "id": -1338, "name": "A1" },
+    "monitor": 1,
+    "floating": false,
+    "mapped": true
+  },
+  {
+    "at": [100, 50],
+    "size": [1280, 720],
+    "class": "steam_app_238960",
+    "title": "Path of Exile",
+    "workspace": { "id": 2, "name": "2" },
+    "monitor": 1,
+    "floating": false,
+    "mapped": true
+  },
+  {
+    "at": [2567, 49],
+    "size": [1906, 1024],
+    "class": "org.rncbc.qpwgraph",
+    "title": "Untitled1 — A PipeWire Graph Qt GUI Interface",
+    "workspace": { "id": -1339, "name": "ts" },
+    "monitor": 0,
+    "floating": false,
+    "mapped": true
+  }
+]

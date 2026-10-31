@@ -178,15 +178,15 @@ impl Backend for WlrBackend {
     }
 
     fn game_window(&self) -> Option<ScreenRegion> {
-        wayland::find_game_window()
+        crate::platform::desktops::game_window(self.desktop)
     }
 
     fn window_at(&self, x: i32, y: i32) -> Option<ScreenRegion> {
-        wayland::window_under_point(x, y)
+        crate::platform::desktops::window_at(self.desktop, x, y)
     }
 
     fn monitor_at(&self, x: i32, y: i32) -> Option<ScreenRegion> {
-        wayland::monitor_under_point(x, y)
+        crate::platform::desktops::monitor_at(self.desktop, x, y)
     }
 
     fn notify(&self, msg: &str) {

@@ -1,0 +1,38 @@
+[
+  {
+    "id": 20,
+    "title": "Path of Exile",
+    "app_id": "steam_app_238960",
+    "pid": 4242,
+    "workspace_id": 2,
+    "is_focused": true,
+    "is_floating": false,
+    "is_urgent": false,
+    "layout": {
+      "pos_in_scrolling_layout": [1, 1],
+      "tile_size": [1280.5, 720.25],
+      "window_size": [1280, 720],
+      "tile_pos_in_workspace_view": [100.5, 40.25],
+      "window_offset_in_tile": [0.0, 0.0]
+    },
+    "focus_timestamp": null
+  },
+  {
+    "id": 21,
+    "title": "Alacritty",
+    "app_id": "Alacritty",
+    "pid": 4243,
+    "workspace_id": 2,
+    "is_focused": false,
+    "is_floating": true,
+    "is_urgent": false,
+    "layout": {
+      "pos_in_scrolling_layout": null,
+      "tile_size": [600.0, 400.0],
+      "window_size": [600, 400],
+      "tile_pos_in_workspace_view": null,
+      "window_offset_in_tile": [0.0, 0.0]
+    },
+    "focus_timestamp": null
+  }
+]

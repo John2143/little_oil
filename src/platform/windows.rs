@@ -485,12 +485,6 @@ fn clamp_region(x: i32, y: i32, w: i32, h: i32) -> Option<ScreenRegion> {
     })
 }
 
-pub fn select_region(prompt: &str) -> Result<ScreenRegion> {
-    // Region selection is interactive; `little_oil gui` provides drag-to-select
-    // on a screenshot preview (Phase 3). The CLI path explains that.
-    bail!("{prompt}\nRegion selection on Windows is done from the GUI: run `little_oil gui`")
-}
-
 // ── clipboard ─────────────────────────────────────────────────────
 
 /// Clear the system clipboard.

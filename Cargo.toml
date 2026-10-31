@@ -17,6 +17,7 @@ regex = "1.12.3"
 ureq = { version = "3.2.0", features = ["json"] }
 rust_decimal = "1.40.0"
 anyhow = "1.0.102"
+clap = { version = "4.6", features = ["derive"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 image = "0.25.9"
@@ -55,6 +56,7 @@ global-hotkey = "0.9"
 winresource = "0.1"
 
 [dev-dependencies]
+egui_kittest = "0.37"
 tracing-test = "0.2.6"
 
 [lints.clippy]

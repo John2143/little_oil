@@ -1,0 +1,22 @@
+[
+  {
+    "id": 1,
+    "idx": 1,
+    "name": null,
+    "output": "DP-1",
+    "is_urgent": false,
+    "is_active": true,
+    "is_focused": false,
+    "active_window_id": 10
+  },
+  {
+    "id": 2,
+    "idx": 1,
+    "name": "game",
+    "output": "HDMI-A-1",
+    "is_urgent": false,
+    "is_active": true,
+    "is_focused": true,
+    "active_window_id": 20
+  }
+]

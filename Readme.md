@@ -46,8 +46,8 @@ Settings tab → *Open config folder*).
   so there is no `pointer_scale` on Windows.
 - DPI awareness is set per-monitor at startup; all coordinates are physical
   pixels. If the game runs at 100% scale everything matches the calibrations.
-- `set-region`/`select_region` (slurp) are Linux-only; on Windows do region
-  selection from the GUI drag-select.
+- Region selection (`set-region`, `calibrate-point`) opens the GUI picker on
+  every platform: drag a box over the captured desktop.
 
 ## Linux
 
@@ -74,7 +74,6 @@ Build your own with the nix flake or `cargo build --release`.
 ## Requirements (Linux)
 
 - `grim` — screenshots (uses the wlr-screencopy protocol)
-- `slurp` — interactive region selection (uses the layer-shell protocol)
 - `wl-clipboard` (the Rust `wl-clipboard-rs` crate) — item tooltip reading
 - Linux `uinput` for pointer/keyboard injection (the `mouse_keyboard_input`
   crate; the user needs write access to `/dev/uinput`)
@@ -87,13 +86,12 @@ protocols. Automatic game-window detection and the GUI's right-click "whole
 window / whole monitor" shortcuts call `hyprctl` and only work on Hyprland;
 elsewhere, drag the region by hand. Tested on **Hyprland**; **niri** works out
 of the box because it implements the same protocols (`wlr-screencopy` per its
-Screencasting wiki page, `layer-shell`, and `zwp_primary_selection` for the
-clipboard read). Any other Wayland compositor implementing those protocols
-should work too.
+Screencasting wiki page, and `zwp_primary_selection` for the clipboard read).
+Any other Wayland compositor implementing those protocols should work too.
 
 ### niri notes
 
-- Install `grim` and `slurp`; no portal/pipewire setup is needed because grim
+- Install `grim`; no portal/pipewire setup is needed because grim
   talks to niri directly via `wlr-screencopy`.
 - **Scroll invalidates calibrations.** niri is scrollable-tiling: scrolling the
   workspace moves the game window on screen, so every calibrated region
@@ -142,8 +140,8 @@ REPL — is a method on `App`; there is no process-global mutable state. `main`
 (src/main.rs) only loads config, constructs `App`, and dispatches argv.
 
 Platform-dependent work lives behind `Platform` (src/platform/mod.rs):
-screenshot capture (grim on Wayland, WGC on Windows), region selection (slurp
-on Wayland, drag-select in the GUI on Windows), clipboard clear/read, and
+screenshot capture (grim on Wayland, WGC on Windows), region selection (the
+GUI picker behind `little_oil set-region`), clipboard clear/read, and
 full-desktop capture. `little_oil gui` (src/gui.rs) is an eframe/egui panel
 that drives the same `App` methods from buttons, the system tray (Windows),
 and global hotkeys (Windows: F10/F11/F12).

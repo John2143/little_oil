@@ -1,0 +1,34 @@
+{
+  "DP-1": {
+    "name": "DP-1",
+    "make": "Dell Inc.",
+    "model": "DELL U2720Q",
+    "serial": null,
+    "physical_size": [600, 340],
+    "modes": [
+      { "width": 3840, "height": 2160, "refresh_rate": 60000, "is_preferred": true }
+    ],
+    "current_mode": 0,
+    "is_custom_mode": false,
+    "vrr_supported": false,
+    "vrr_enabled": false,
+    "logical": { "x": -2560, "y": 0, "width": 2560, "height": 1440, "scale": 1.5, "transform": "normal" },
+    "max_bpc": null
+  },
+  "HDMI-A-1": {
+    "name": "HDMI-A-1",
+    "make": "BenQ",
+    "model": "BenQ XL2430T",
+    "serial": null,
+    "physical_size": [530, 300],
+    "modes": [
+      { "width": 1920, "height": 1080, "refresh_rate": 143996, "is_preferred": true }
+    ],
+    "current_mode": 0,
+    "is_custom_mode": false,
+    "vrr_supported": false,
+    "vrr_enabled": false,
+    "logical": { "x": 0, "y": 0, "width": 1920, "height": 1080, "scale": 1.0, "transform": "normal" },
+    "max_bpc": null
+  }
+}

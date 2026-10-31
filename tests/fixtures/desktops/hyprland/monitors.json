@@ -1,0 +1,26 @@
+[
+  {
+    "id": 0,
+    "name": "DP-1",
+    "width": 1920,
+    "height": 1080,
+    "x": 2560,
+    "y": 0,
+    "scale": 1,
+    "activeWorkspace": { "id": 1, "name": "1" },
+    "focused": false,
+    "transform": 0
+  },
+  {
+    "id": 1,
+    "name": "DP-2",
+    "width": 2560,
+    "height": 1440,
+    "x": 0,
+    "y": 0,
+    "scale": 1,
+    "activeWorkspace": { "id": 2, "name": "2" },
+    "focused": true,
+    "transform": 0
+  }
+]

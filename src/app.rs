@@ -8,11 +8,9 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::process::Command;
-use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::auto_roll::{self, AutoRollConfig, AutoRollMod};
-use crate::chaos_recipe;
 use crate::screenshot::{Rect, ScreenshotData};
 use crate::stash_grid::{CellGrid, MAP_COLS, MAP_ROWS, QUAD_COLS, QUAD_ROWS};
 use crate::{NamedPoint, ScreenRegion, Settings, save_config};
@@ -433,7 +431,7 @@ impl App {
         Ok(())
     }
 
-    fn calibrate_stash(&self) -> anyhow::Result<()> {
+    pub(crate) fn calibrate_stash(&self) -> anyhow::Result<()> {
         let snapshot = { self.settings.read().clone() };
 
         let _game_region = snapshot.game_window_region.ok_or_else(|| {
@@ -448,7 +446,7 @@ impl App {
         })
     }
 
-    fn calibrate_map(&self) -> anyhow::Result<()> {
+    pub(crate) fn calibrate_map(&self) -> anyhow::Result<()> {
         let snapshot = { self.settings.read().clone() };
 
         let _game_region = snapshot.game_window_region.ok_or_else(|| {
@@ -463,11 +461,16 @@ impl App {
         })
     }
 
-    /// Slurp one box around a named clickable target and upsert it into `points`.
+    /// Select one box around a named clickable target in the GUI picker and
+    /// upsert it into `points`.
     /// Idempotent: re-running overwrites the entry for the same name. Points are
     /// screen-space, so no screenshot or `set-region` prerequisite.
-    fn calibrate_point(&self, name: &str) -> anyhow::Result<()> {
-        let region = platform::select_region(&format!("Slurp a small box around {name}"))?;
+    pub(crate) fn calibrate_point(&self, name: &str) -> anyhow::Result<()> {
+        let region = crate::gui::run_region_picker(
+            self,
+            name,
+            &format!("Select a small box around {name} (the click lands at its centre)"),
+        )?;
         {
             let mut settings = self.settings.write();
             let mut points = settings.points.take().unwrap_or_default();
@@ -480,6 +483,47 @@ impl App {
         }
         self.save_settings()?;
         println!("Point '{name}' saved at ({}, {})", region.x, region.y);
+        Ok(())
+    }
+
+    /// Open the GUI region picker for `name`, save the chosen region to the
+    /// config and announce it. `name` is one of the `set-region` targets.
+    pub(crate) fn set_region(&self, name: &str) -> anyhow::Result<()> {
+        let prompt = match name {
+            "inventory" => "Select the INVENTORY grid region (top-left slot to bottom-right slot)",
+            "stash" => "Select the STASH grid region (top-left slot to bottom-right slot)",
+            "window" => "Select the GAME WINDOW (drag around the entire PoE window)",
+            "map" => "Select the MAP grid region (the 12x7 map window, not the sub-tab row)",
+            other => bail!("unknown region '{other}' — use inventory, stash, window or map"),
+        };
+        let region = crate::gui::run_region_picker(self, name, prompt)?;
+        {
+            let mut settings = self.settings.write();
+            match name {
+                "inventory" => settings.inv_region = Some(region),
+                "stash" => settings.stash_region = Some(region),
+                "window" => settings.game_window_region = Some(region),
+                "map" => settings.map_region = Some(region),
+                _ => unreachable!("region name validated above"),
+            }
+        }
+        self.save_settings()?;
+        println!(
+            "{name} region saved: {}x{} at ({}, {})",
+            region.width, region.height, region.x, region.y
+        );
+        #[cfg(target_os = "linux")]
+        let _ = Command::new("notify-send")
+            .args([
+                "-u",
+                "low",
+                "Little Oil",
+                &format!(
+                    "{name} region saved: {}x{} at ({}, {})",
+                    region.width, region.height, region.x, region.y
+                ),
+            ])
+            .spawn();
         Ok(())
     }
 
@@ -536,7 +580,7 @@ impl App {
     }
 
     /// Click a calibrated named point (currency slot, filter button, …).
-    fn click_point(&self, name: &str) -> anyhow::Result<()> {
+    pub(crate) fn click_point(&self, name: &str) -> anyhow::Result<()> {
         self.focus_game_window()?;
         let settings = self.settings.read();
         let point = settings
@@ -555,7 +599,7 @@ impl App {
     }
 
     /// Click cell (col, row) of the calibrated map grid.
-    fn click_map_cell(&self, col: usize, row: usize) -> anyhow::Result<()> {
+    pub(crate) fn click_map_cell(&self, col: usize, row: usize) -> anyhow::Result<()> {
         self.focus_game_window()?;
         let settings = self.settings.read().clone();
         let grid = match &settings.map_grid {
@@ -569,7 +613,7 @@ impl App {
         Ok(())
     }
 
-    fn stash_copy(&self) -> anyhow::Result<()> {
+    pub(crate) fn stash_copy(&self) -> anyhow::Result<()> {
         self.focus_game_window()?;
 
         let settings = self.settings.read().clone();
@@ -612,7 +656,7 @@ impl App {
         Ok(())
     }
 
-    fn chance(&self) -> anyhow::Result<()> {
+    pub(crate) fn chance(&self) -> anyhow::Result<()> {
         let chance = self.point_pos(&["chance"], (237, 292));
         let scour = self.point_pos(&["scour"], (169, 472));
         let slot = self.point_pos(&["slot"], (323, 522));
@@ -854,7 +898,7 @@ impl App {
         Ok(())
     }
 
-    fn sort_quad(&self, times: u32) -> anyhow::Result<()> {
+    pub(crate) fn sort_quad(&self, times: u32) -> anyhow::Result<()> {
         self.focus_game_window()?;
         self.backend.sleep_ms(300);
 
@@ -883,245 +927,6 @@ impl App {
         }
         Ok(())
     }
-
-    /// Returns after one command, or starts the interactive REPL when no command
-    /// was given (matching the previous behavior of main()).
-    pub(crate) fn run(self, args: &[String]) -> anyhow::Result<()> {
-        match args.first().map(|x| &**x) {
-            Some("gui") => {
-                let app = Arc::new(self);
-                return crate::gui::run(app);
-            }
-            Some("config") => {
-                // Print the ACTIVE config. Calibration is only inspectable this way.
-                println!("{}", serde_json::to_string_pretty(&*self.settings.read())?);
-                return Ok(());
-            }
-            Some("version") | Some("--version") => {
-                println!("little_oil v{}", env!("CARGO_PKG_VERSION"));
-                return Ok(());
-            }
-            Some("doctor") => {
-                // checkhealth-style diagnostics; exits non-zero on any Error.
-                let checks = crate::health::run(&self);
-                for c in &checks {
-                    let tag = match c.status {
-                        crate::health::CheckStatus::Good => "[ OK ]",
-                        crate::health::CheckStatus::Warn => "[WARN]",
-                        crate::health::CheckStatus::Error => "[ ERR]",
-                    };
-                    println!("{tag} {:<20} {}", c.name, c.message);
-                }
-                let errors = checks
-                    .iter()
-                    .filter(|c| c.status == crate::health::CheckStatus::Error)
-                    .count();
-                if errors > 0 {
-                    bail!("{errors} check(s) failed");
-                }
-                return Ok(());
-            }
-            Some("sort") => {
-                let times: u32 = args.get(1).map(|x| x.parse()).transpose()?.unwrap_or(40);
-                return self.sort_quad(times);
-            }
-            Some("empty") => return self.empty_inv(),
-            Some("emptyr") => return self.empty_inv_right(),
-            Some("roll") => {
-                let file = args.get(1).ok_or_else(|| {
-                    anyhow::anyhow!("Usage: little_oil roll <chrome-file> <times>")
-                })?;
-                let times: i64 = args
-                    .get(2)
-                    .ok_or_else(|| anyhow::anyhow!("Usage: little_oil roll <chrome-file> <times>"))?
-                    .parse()?;
-
-                auto_roll::auto_roll(&self, file, times);
-                return Ok(());
-            }
-            Some("reset_inv") => return self.reset_inv_colors(),
-            Some("calibrate-pointer") => {
-                // Platforms with absolute pointer positioning (niri on Linux,
-                // Windows) don't need pointer_scale calibration.
-                if self.desktop().uses_absolute_pointer() {
-                    bail!(
-                        "calibrate-pointer is not needed on this platform — pointer \
-                         control uses absolute coordinates. Set pointer_scale manually \
-                         in config only if you see coordinate drift."
-                    );
-                }
-                #[cfg(target_os = "linux")]
-                return self.calibrate_pointer();
-                #[cfg(not(target_os = "linux"))]
-                bail!(
-                    "calibrate-pointer is not supported on this platform — pointer control uses absolute coordinates."
-                );
-            }
-            Some("calibrate-stash") => return self.calibrate_stash(),
-            Some("calibrate-map") => return self.calibrate_map(),
-            Some("calibrate-point") => {
-                let name = args
-                    .get(1)
-                    .ok_or_else(|| anyhow::anyhow!("Usage: little_oil calibrate-point <name>"))?;
-                return self.calibrate_point(name);
-            }
-            Some("calibrate-currency") => {
-                for name in [
-                    "transmute",
-                    "alt",
-                    "annul",
-                    "chance",
-                    "augment",
-                    "regal",
-                    "chaos",
-                    "scour",
-                    "alchemy",
-                    "exalt",
-                ] {
-                    prompt_enter(&format!(
-                        "Open the currency tab if it isn't already. Next point: {name} — press Enter to slurp its slot."
-                    ))?;
-                    self.calibrate_point(name)?;
-                }
-                return Ok(());
-            }
-            Some("stash") => {
-                let mode = args.get(1).map(|x| &**x);
-                match mode {
-                    Some("click") => {
-                        let times: u32 = args.get(2).map(|x| x.parse()).transpose()?.unwrap_or(40);
-                        return self.sort_quad(times);
-                    }
-                    Some("copy") => return self.stash_copy(),
-                    _ => {
-                        println!("Usage: little_oil stash <click|copy> [times]");
-                        println!(
-                            "  click <times>  Left-click every highlighted cell (hold Ctrl to pull, Shift to identify)"
-                        );
-                        println!(
-                            "  copy           Hover every highlighted cell and Ctrl+Alt+C it, printing unique items"
-                        );
-                        return Ok(());
-                    }
-                }
-            }
-            Some("click") => match args.get(1).map(|x| &**x) {
-                Some("map") => {
-                    let col: usize = args
-                        .get(2)
-                        .ok_or_else(|| anyhow::anyhow!("Usage: little_oil click map <col> <row>"))?
-                        .parse()?;
-                    let row: usize = args
-                        .get(3)
-                        .ok_or_else(|| anyhow::anyhow!("Usage: little_oil click map <col> <row>"))?
-                        .parse()?;
-                    if col >= MAP_COLS || row >= MAP_ROWS {
-                        bail!(
-                            "map cell ({col}, {row}) out of range — cols 0..{MAP_COLS}, rows 0..{MAP_ROWS}"
-                        );
-                    }
-                    return self.click_map_cell(col, row);
-                }
-                Some(name) => return self.click_point(name),
-                None => {
-                    println!("Usage: little_oil click <name> | click map <col> <row>");
-                    println!(
-                        "  <name>    A calibrated point: filter, or a currency (chaos, alch, …)"
-                    );
-                    return Ok(());
-                }
-            },
-            Some("set-region") => {
-                let region_name = args.get(1).map(|x| &**x).unwrap_or("help");
-                let region = match region_name {
-                    "inventory" => {
-                        let r = platform::select_region(
-                            "Select the INVENTORY grid region (top-left slot to bottom-right slot)",
-                        )?;
-                        self.settings.write().inv_region = Some(r);
-                        r
-                    }
-                    "stash" => {
-                        let r = platform::select_region(
-                            "Select the STASH grid region (top-left slot to bottom-right slot)",
-                        )?;
-                        self.settings.write().stash_region = Some(r);
-                        r
-                    }
-                    "window" => {
-                        let r = platform::select_region(
-                            "Select the GAME WINDOW (drag around the entire PoE window)",
-                        )?;
-                        self.settings.write().game_window_region = Some(r);
-                        r
-                    }
-                    "map" => {
-                        let r = platform::select_region(
-                            "Select the MAP grid region (the 12x7 map window, not the sub-tab row)",
-                        )?;
-                        self.settings.write().map_region = Some(r);
-                        r
-                    }
-                    _ => {
-                        eprintln!("Usage: little_oil set-region <inventory|stash|window|map>");
-                        return Ok(());
-                    }
-                };
-                #[cfg(not(target_os = "linux"))]
-                let _ = region;
-
-                self.save_settings()?;
-                #[cfg(target_os = "linux")]
-                let _ = Command::new("notify-send")
-                    .args([
-                        "-u",
-                        "low",
-                        "Little Oil",
-                        &format!(
-                            "{region_name} region saved: {}x{} at ({}, {})",
-                            region.width, region.height, region.x, region.y
-                        ),
-                    ])
-                    .spawn();
-
-                return Ok(());
-            }
-            Some("chance") => return self.chance(),
-            Some("tally") => {
-                let c = self
-                    .settings
-                    .read()
-                    .chaos_recipe_settings
-                    .clone()
-                    .ok_or_else(|| anyhow::anyhow!("No chaos recipe config found"))?;
-                chaos_recipe::get_tally(&self, &c)?;
-                return Ok(());
-            }
-            Some("chaos") => {
-                let amt: usize = args.get(1).map(|x| x.parse()).transpose()?.unwrap_or(1);
-                let c = self
-                    .settings
-                    .read()
-                    .chaos_recipe_settings
-                    .clone()
-                    .ok_or_else(|| anyhow::anyhow!("No chaos recipe config found"))?;
-                chaos_recipe::do_recipe(&self, &c, amt)?;
-                return Ok(());
-            }
-            Some(n) => {
-                println!("Invalid command: {n}");
-                return Ok(());
-            }
-            None => {}
-        }
-
-        let app = Arc::new(self);
-        let app2 = Arc::clone(&app);
-        std::thread::spawn(move || app2.command_line())
-            .join()
-            .unwrap();
-        Ok(())
-    }
 }
 
 fn split_space(input: &str) -> (&str, &str) {
@@ -1133,7 +938,7 @@ fn split_space(input: &str) -> (&str, &str) {
     (input, "")
 }
 /// Print a prompt, mirror it to notify-send on Linux, and block until Enter.
-fn prompt_enter(msg: &str) -> anyhow::Result<()> {
+pub(crate) fn prompt_enter(msg: &str) -> anyhow::Result<()> {
     println!("\n>>> {msg}\n    Press Enter when ready...");
     #[cfg(target_os = "linux")]
     let _ = Command::new("notify-send")
@@ -1153,7 +958,7 @@ set-region <inventory|stash|window|map>: Select and save a screen region
 calibrate-pointer: Measure pointer scale (run once per machine)
 calibrate-stash: Calibrate the 24x24 quad tab grid (3 positions, base + search capture each)
 calibrate-map: Calibrate the 12x7 map tab grid (3 positions, base + search capture each)
-calibrate-point <name>: Slurp a small box and save it as a named clickable point
+calibrate-point <name>: Drag a small box in the GUI picker and save it as a named clickable point
 calibrate-currency: Calibrate the 10 currency slots (transmute, alt, annul, chance, augment, regal, chaos, scour, alchemy, exalt)
 click <name>: Click a calibrated point (e.g. filter, chaos)
 click map <col> <row>: Click a cell in the calibrated map grid
@@ -1167,7 +972,7 @@ Press CTRL + C to quit this program.
 "#;
 
 impl App {
-    fn command_line(&self) {
+    pub(crate) fn command_line(&self) {
         let stdin = io::stdin();
         for line in stdin.lock().lines() {
             let Ok(line) = line else {
