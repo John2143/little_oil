@@ -48,9 +48,8 @@ windows = { version = "0.62", features = [
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
 ] }
-tray-icon = "0.19"
-muda = "0.15"
-global-hotkey = "0.6"
+tray-icon = "0.26"
+global-hotkey = "0.9"
 
 [build-dependencies]
 winresource = "0.1"

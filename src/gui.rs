@@ -84,10 +84,53 @@ struct SetupState {
     /// per step entry, so a failing capture doesn't spam the log every frame.
     last_captured_step: Option<usize>,
 }
-struct LittleOilGui {
+
+/// A macro action, run on a worker thread by [`ActionRunner`].
+type Action = fn(&App) -> Result<()>;
+
+/// Starts macro actions on worker threads. Cheap to clone into the tray and
+/// hotkey event handlers, which run outside the egui frame callbacks.
+#[derive(Clone)]
+struct ActionRunner {
     app: Arc<App>,
     state: Arc<Mutex<GuiState>>,
     busy: Arc<AtomicBool>,
+    ctx: egui::Context,
+}
+
+impl ActionRunner {
+    fn push(&self, msg: impl Into<String>) {
+        self.state.lock().push(msg);
+        self.ctx.request_repaint();
+    }
+
+    /// Run `f` on a background thread unless another action is running.
+    fn run(&self, name: &'static str, f: Action) {
+        if self.busy.swap(true, Ordering::AcqRel) {
+            self.push(format!(
+                "{name}: already busy — wait for the current action"
+            ));
+            return;
+        }
+        self.push(format!("▶ {name}…"));
+        let this = self.clone();
+        std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            let result = f(&this.app);
+            let elapsed = started.elapsed();
+            match result {
+                Ok(()) => this.push(format!("✓ {name} done in {:.1}s", elapsed.as_secs_f32())),
+                Err(e) => this.push(format!("✗ {name} failed: {e:#}")),
+            }
+            this.busy.store(false, Ordering::Release);
+            this.ctx.request_repaint();
+        });
+    }
+}
+
+struct LittleOilGui {
+    app: Arc<App>,
+    runner: ActionRunner,
 
     tab: &'static str,
     preview: Option<Preview>,
@@ -112,16 +155,20 @@ struct LittleOilGui {
 }
 
 impl LittleOilGui {
-    fn new(_cc: &eframe::CreationContext<'_>, app: Arc<App>) -> Self {
+    fn new(cc: &eframe::CreationContext<'_>, app: Arc<App>) -> Self {
         let state = Arc::new(Mutex::new(GuiState {
             log: VecDeque::new(),
         }));
         let first_run = !app.settings.read().setup_complete;
         let tab = if first_run { "Setup" } else { "Actions" };
         let mut this = LittleOilGui {
+            runner: ActionRunner {
+                app: Arc::clone(&app),
+                state,
+                busy: Arc::new(AtomicBool::new(false)),
+                ctx: cc.egui_ctx.clone(),
+            },
             app,
-            state,
-            busy: Arc::new(AtomicBool::new(false)),
             tab,
             preview: None,
             drag: None,
@@ -163,33 +210,12 @@ impl LittleOilGui {
     }
 
     fn push(&mut self, msg: impl Into<String>) {
-        self.state.lock().push(msg);
+        self.runner.push(msg);
     }
 
     /// Run a macro action on a background thread, guarding against overlap.
-    fn run_action(&mut self, name: &'static str, f: fn(&App) -> Result<()>) {
-        if self.busy.load(Ordering::SeqCst) {
-            self.push(format!(
-                "{name}: already busy — wait for the current action"
-            ));
-            return;
-        }
-        self.busy.store(true, Ordering::SeqCst);
-        let app = Arc::clone(&self.app);
-        let state = Arc::clone(&self.state);
-        let busy = Arc::clone(&self.busy);
-        self.push(format!("▶ {name}…"));
-        std::thread::spawn(move || {
-            let started = std::time::Instant::now();
-            let result = f(&app);
-            let elapsed = started.elapsed();
-            let mut st = state.lock();
-            match result {
-                Ok(()) => st.push(format!("✓ {name} done in {:.1}s", elapsed.as_secs_f32())),
-                Err(e) => st.push(format!("✗ {name} failed: {e:#}")),
-            }
-            busy.store(false, Ordering::SeqCst);
-        });
+    fn run_action(&mut self, name: &'static str, f: Action) {
+        self.runner.run(name, f);
     }
 
     fn capture_preview(&mut self, ctx: &egui::Context) {
@@ -308,7 +334,7 @@ impl LittleOilGui {
     }
 
     fn ui_actions(&mut self, ui: &mut egui::Ui) {
-        let busy = self.busy.load(Ordering::SeqCst);
+        let busy = self.runner.busy.load(Ordering::Acquire);
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             if ui
@@ -343,7 +369,7 @@ impl LittleOilGui {
             .stick_to_bottom(true)
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                let log = self.state.lock();
+                let log = self.runner.state.lock();
                 for line in log.log.iter().rev().take(50).rev() {
                     ui.monospace(line);
                 }
@@ -1024,10 +1050,12 @@ fn fit_into(size: egui::Vec2, avail: egui::Vec2) -> egui::Vec2 {
 
 impl eframe::App for LittleOilGui {
     fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Idempotent; installs the tray/hotkey event handlers once they exist.
         #[cfg(target_os = "windows")]
-        self.pump_tray_events();
-        #[cfg(target_os = "windows")]
-        self.pump_hotkey_events();
+        {
+            self.ensure_tray();
+            self.ensure_hotkeys();
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -1079,29 +1107,55 @@ impl eframe::App for LittleOilGui {
 // tray-icon would drag the whole GTK stack in for nothing.
 
 #[cfg(target_os = "windows")]
-fn build_menu() -> Result<muda::Menu> {
-    let menu = muda::Menu::new();
+use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
+
+#[cfg(target_os = "windows")]
+fn act_empty(app: &App) -> Result<()> {
+    app.empty_inv()
+}
+#[cfg(target_os = "windows")]
+fn act_emptyr(app: &App) -> Result<()> {
+    app.empty_inv_right()
+}
+#[cfg(target_os = "windows")]
+fn act_recalibrate(app: &App) -> Result<()> {
+    app.reset_inv_colors()
+}
+
+/// Tray menu id → (log label, action).
+#[cfg(target_os = "windows")]
+const MENU_ACTIONS: [(&str, &str, Action); 3] = [
+    ("empty", "empty", act_empty),
+    ("emptyr", "emptyr", act_emptyr),
+    ("recalibrate", "recalibrate", act_recalibrate),
+];
+
+/// Global hotkey → (log label, action).
+#[cfg(target_os = "windows")]
+const HOTKEY_ACTIONS: [(global_hotkey::hotkey::Code, &str, Action); 3] = [
+    (global_hotkey::hotkey::Code::F10, "emptyr (F10)", act_emptyr),
+    (global_hotkey::hotkey::Code::F11, "empty (F11)", act_empty),
+    (
+        global_hotkey::hotkey::Code::F12,
+        "recalibrate (F12)",
+        act_recalibrate,
+    ),
+];
+
+#[cfg(target_os = "windows")]
+fn build_menu() -> Result<Menu> {
+    let menu = Menu::new();
     menu.append_items(&[
-        &muda::MenuItem::with_id(
-            muda::MenuId::new("empty"),
-            "Empty inventory (left)",
-            true,
-            None,
-        ),
-        &muda::MenuItem::with_id(
-            muda::MenuId::new("emptyr"),
-            "Empty inventory (right)",
-            true,
-            None,
-        ),
-        &muda::MenuItem::with_id(
-            muda::MenuId::new("recalibrate"),
+        &MenuItem::with_id(MenuId::new("empty"), "Empty inventory (left)", true, None),
+        &MenuItem::with_id(MenuId::new("emptyr"), "Empty inventory (right)", true, None),
+        &MenuItem::with_id(
+            MenuId::new("recalibrate"),
             "Recalibrate inventory colors",
             true,
             None,
         ),
-        &muda::PredefinedMenuItem::separator(),
-        &muda::PredefinedMenuItem::quit(None),
+        &PredefinedMenuItem::separator(),
+        &PredefinedMenuItem::quit(None),
     ])?;
     Ok(menu)
 }
@@ -1113,7 +1167,7 @@ fn tray_icon_data() -> Result<tray_icon::Icon> {
     let mut rgba = vec![0u8; size * size * 4];
     for y in 0..size {
         for x in 0..size {
-            let inside = x >= 2 && x < 30 && y >= 2 && y < 30;
+            let inside = (2..30).contains(&x) && (2..30).contains(&y);
             let droplet = {
                 let dx = x as f32 - 16.0;
                 let dy = y as f32 - 13.0;
@@ -1138,6 +1192,16 @@ impl LittleOilGui {
         if self.tray.is_some() {
             return;
         }
+        // Menu clicks start actions directly from muda's handler, which runs in
+        // its hidden window's WndProc on this thread's message pump — so they
+        // work while the panel is idle or hidden. One-shot: later calls (tray
+        // creation retries) are ignored.
+        let runner = self.runner.clone();
+        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+            if let Some((_, label, f)) = MENU_ACTIONS.iter().find(|(id, _, _)| event.id == *id) {
+                runner.run(label, *f);
+            }
+        }));
         let menu = match build_menu() {
             Ok(m) => m,
             Err(e) => {
@@ -1166,90 +1230,47 @@ impl LittleOilGui {
         }
     }
 
-    fn pump_tray_events(&mut self) {
-        self.ensure_tray();
-        while let Ok(event) = muda::MenuEvent::receiver().try_recv() {
-            let id = event.id().0.as_str();
-            match id {
-                "empty" => self.run_action("empty", |app| app.empty_inv()),
-                "emptyr" => self.run_action("emptyr", |app| app.empty_inv_right()),
-                "recalibrate" => self.run_action("recalibrate", |app| app.reset_inv_colors()),
-                _ => {}
-            }
-        }
-    }
-
     fn ensure_hotkeys(&mut self) {
         if self.hotkeys.is_some() {
             return;
         }
-        use global_hotkey::GlobalHotKeyManager;
-        use global_hotkey::hotkey::{Code, HotKey};
+        use global_hotkey::hotkey::HotKey;
+        use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
         let Ok(manager) = GlobalHotKeyManager::new() else {
             tracing::warn!("global hotkey manager unavailable");
             return;
         };
-        let candidates = [
-            (
-                HotKey::new(None, Code::F10),
-                "emptyr (F10)" as &'static str,
-                "emptyr" as &'static str,
-            ),
-            (HotKey::new(None, Code::F11), "empty (F11)", "empty"),
-            (
-                HotKey::new(None, Code::F12),
-                "recalibrate (F12)",
-                "recalibrate",
-            ),
-        ];
-        let mut actions: Vec<(u32, &'static str, &'static str)> = Vec::new();
-        for (hk, label, action) in candidates {
+        let mut ids: Vec<(u32, &'static str, Action)> = Vec::new();
+        for (code, label, f) in HOTKEY_ACTIONS {
+            let hk = HotKey::new(None, code);
             if manager.register(hk).is_ok() {
-                actions.push((hk.id(), label, action));
+                ids.push((hk.id(), label, f));
             }
         }
         tracing::info!(
-            count = actions.len(),
+            count = ids.len(),
             "registered global hotkeys (F10 emptyr, F11 empty, F12 recalibrate)"
         );
-        self.hotkeys = Some(Hotkeys {
-            _manager: manager,
-            actions,
-        });
-    }
-
-    fn pump_hotkey_events(&mut self) {
-        self.ensure_hotkeys();
-        use global_hotkey::GlobalHotKeyEvent;
-        // Collect matches under a short borrow, then run actions after it ends.
-        let mut pending: Vec<(&'static str, &'static str)> = Vec::new();
-        {
-            let Some(hotkeys) = &self.hotkeys else { return };
-            while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
-                let id = event.id();
-                for (hk_id, label, action) in &hotkeys.actions {
-                    if *hk_id == id {
-                        pending.push((label, action));
-                        break;
-                    }
-                }
+        // Like the tray handler, this runs from WM_HOTKEY in the manager's
+        // hidden window, independent of egui repaints. No event can arrive
+        // before it is installed: WM_HOTKEY is only delivered when the message
+        // loop next pumps. Only key presses act — releases used to double-fire.
+        let runner = self.runner.clone();
+        GlobalHotKeyEvent::set_event_handler(Some(move |event: GlobalHotKeyEvent| {
+            if event.state != HotKeyState::Pressed {
+                return;
             }
-        }
-        for (label, action) in pending {
-            match action {
-                "empty" => self.run_action(label, |app| app.empty_inv()),
-                "emptyr" => self.run_action(label, |app| app.empty_inv_right()),
-                _ => self.run_action(label, |app| app.reset_inv_colors()),
+            if let Some((_, label, f)) = ids.iter().find(|(id, _, _)| *id == event.id) {
+                runner.run(label, *f);
             }
-        }
+        }));
+        self.hotkeys = Some(Hotkeys { _manager: manager });
     }
 }
 
 #[cfg(target_os = "windows")]
 struct Hotkeys {
     _manager: global_hotkey::GlobalHotKeyManager,
-    /// (hotkey id, log label, action name)
-    actions: Vec<(u32, &'static str, &'static str)>,
 }
 
 // ── entry ────────────────────────────────────────────────────────
