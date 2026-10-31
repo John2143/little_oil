@@ -156,72 +156,80 @@ impl Item {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum TabMatch {
+    /// The fetched page is the configured tab.
+    Current,
+    /// The configured tab lives at this index; fetch that page instead.
+    Refetch(usize),
+    /// No tab has the configured name.
+    Missing,
+}
+
+fn match_tab(tabs: &[StashTab], tab_name: &str, fetched_index: usize) -> TabMatch {
+    if tabs.iter().any(|t| t.i == fetched_index && t.n == tab_name) {
+        return TabMatch::Current;
+    }
+    match tabs.iter().find(|t| t.n == tab_name) {
+        Some(t) => TabMatch::Refetch(t.i),
+        None => TabMatch::Missing,
+    }
+}
+
 impl ChaosRecipe {
-    fn get_url(&self) -> String {
-        //let u = format!(
-        //"https://www.pathofexile.com/character-window/get-stash-items?accountName={}&realm=pc&league={}&tabs=1&tabIndex={}",
-        //self.account_name,
-        //self.league,
-        //self.tab_index,
-        //);
-        //let d = ureq::get(&u)
-        //.set("Accept", "application/json")
-        //.set("Cookie", &format!("POESESSID={}", self.session_id))
-        //.call();
-
-        //dbg!(d.unwrap().into_string());
-
+    fn get_url(&self, tab_index: usize) -> String {
         format!(
             "https://www.pathofexile.com/character-window/get-stash-items?accountName={}&realm=pc&league={}&tabs=1&tabIndex={}",
-            self.account_name,
-            self.league,
-            self.tab_index.unwrap_or(0),
+            self.account_name, self.league, tab_index,
         )
     }
 
-    fn get_json(&self, app: &crate::App) -> anyhow::Result<StashAPIResult> {
-        let resp = ureq::get(&self.get_url())
+    fn fetch(&self, tab_index: usize) -> anyhow::Result<StashAPIResult> {
+        let resp = ureq::get(&self.get_url(tab_index))
             .header("Accept", "application/json")
             .header("Cookie", &format!("POESESSID={}", self.session_id))
             .call()
             .map_err(|e| anyhow::anyhow!("failed to fetch stash tab from pathofexile.com: {e}"))?;
-        let apir: StashAPIResult = resp
-            .into_body()
+        resp.into_body()
             .read_json()
-            .map_err(|e| anyhow::anyhow!("failed to parse stash tab JSON: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("failed to parse stash tab JSON: {e}"))
+    }
 
-        let mut index_matched = false;
-        for tab in &apir.tabs {
-            if Some(tab.i) == self.tab_index {
-                index_matched = true;
-                println!("Chaos recipe tab name is {}", tab.n);
-                println!("Config file name is {}", self.tab_name);
-            } else if tab.n == self.tab_name {
-                println!("closest ID is {}, {}", tab.n, tab.i);
-                let mut settings = app.settings.write();
-                if let Some(s) = settings.chaos_recipe_settings.as_mut() {
-                    s.tab_index = Some(tab.i);
-                }
-                crate::save_config(&crate::config_path()?, &*settings)?;
-                println!("writing config {:?}", settings);
-
-                let mut newc = self.clone();
-                newc.tab_index = Some(tab.i);
-                //TODO safety
-                return newc.get_json(app);
-            }
-        }
-
-        if !index_matched {
-            bail!(
+    /// Fetch the configured stash tab. If it moved, find it by name, save the
+    /// new index to config, and fetch once more — never more than two requests.
+    fn get_json(&self, app: &crate::App) -> anyhow::Result<StashAPIResult> {
+        let first = self.tab_index.unwrap_or(0);
+        let apir = self.fetch(first)?;
+        match match_tab(&apir.tabs, &self.tab_name, first) {
+            TabMatch::Current => Ok(apir),
+            TabMatch::Missing => bail!(
                 "No stash tab named '{}' found — check chaos_recipe_settings (account '{}', league '{}') in config.json",
                 self.tab_name,
                 self.account_name,
                 self.league
-            );
+            ),
+            TabMatch::Refetch(i) => {
+                println!(
+                    "Stash tab '{}' is index {i}; saving to config",
+                    self.tab_name
+                );
+                {
+                    let mut settings = app.settings.write();
+                    if let Some(s) = settings.chaos_recipe_settings.as_mut() {
+                        s.tab_index = Some(i);
+                    }
+                }
+                app.save_settings()?;
+                let apir = self.fetch(i)?;
+                if match_tab(&apir.tabs, &self.tab_name, i) != TabMatch::Current {
+                    bail!(
+                        "Stash tab '{}' moved while fetching — run the command again",
+                        self.tab_name
+                    );
+                }
+                Ok(apir)
+            }
         }
-
-        Ok(apir)
     }
 }
 
@@ -474,15 +482,58 @@ mod tests {
         assert!(second.helmet.is_none());
         assert!(second.body.is_none());
     }
+
+    fn tab(name: &str, index: usize) -> StashTab {
+        StashTab {
+            n: name.to_string(),
+            i: index,
+            id: format!("tab-{index}"),
+            colour: Color { r: 0, g: 0, b: 0 },
+        }
+    }
+
+    #[test]
+    fn match_tab_current_when_fetched_index_holds_the_name() {
+        let tabs = [tab("maps", 0), tab("quad", 1)];
+        assert_eq!(match_tab(&tabs, "quad", 1), TabMatch::Current);
+    }
+
+    #[test]
+    fn match_tab_refetches_the_index_the_named_tab_lives_at() {
+        let tabs = [tab("maps", 0), tab("quad", 5)];
+        assert_eq!(match_tab(&tabs, "quad", 0), TabMatch::Refetch(5));
+    }
+
+    #[test]
+    fn match_tab_current_on_the_second_duplicate_name() {
+        let tabs = [tab("maps", 0), tab("quad", 2), tab("quad", 7)];
+        assert_eq!(match_tab(&tabs, "quad", 7), TabMatch::Current);
+    }
+
+    /// Refetch always targets the first tab in slice order, so duplicate names
+    /// cannot make the caller bounce between two indices.
+    #[test]
+    fn match_tab_refetches_first_duplicate_by_order() {
+        let tabs = [tab("maps", 0), tab("quad", 2), tab("quad", 7)];
+        assert_eq!(match_tab(&tabs, "quad", 0), TabMatch::Refetch(2));
+    }
+
+    #[test]
+    fn match_tab_missing_when_no_tab_has_the_name() {
+        let tabs = [tab("maps", 0), tab("quad", 1)];
+        assert_eq!(match_tab(&tabs, "chaos", 0), TabMatch::Missing);
+    }
+
+    /// A tab at the fetched index is not enough: the name must match too, or
+    /// the bot would click into whichever tab happens to sit at that index.
+    #[test]
+    fn match_tab_missing_when_only_the_index_matches() {
+        let tabs = [tab("maps", 0), tab("quad", 1)];
+        assert_eq!(match_tab(&tabs, "chaos", 1), TabMatch::Missing);
+    }
+
+    #[test]
+    fn match_tab_missing_on_empty_tab_list() {
+        assert_eq!(match_tab(&[], "quad", 0), TabMatch::Missing);
+    }
 }
-//curl 'https://www.pathofexile.com/character-window/get-stash-items
-//?accountName=John2143658709
-//&realm=pc
-//&league=Kalandra
-//&tabs=0
-//&tabIndex=6
-//'-H 'Accept: application/json, text/javascript, */*; q=0.01'
-//-H 'Accept-Language: en-US,en;q=0.5'
-//-H 'Accept-Encoding: gzip, deflate, br'
-//-H 'Cookie: POESESSID=asdf'
-//--compressed
