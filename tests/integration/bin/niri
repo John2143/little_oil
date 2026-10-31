@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# `niri msg outputs`, answered from sway's IPC.
+#
+# Why this exists: `little_oil` only enables absolute virtual-pointer
+# coordinates after `niri msg outputs` succeeds (it needs the output layout to
+# turn a screen coordinate into protocol coordinates), and falls back to uinput
+# relative motion otherwise — which a headless sway cannot receive, since the
+# headless backend has no input devices. wlroots' `motion_absolute` means the
+# same thing as niri's (the coordinate divided by the extent), so reporting
+# sway's real output layout here is enough to exercise the same code path. See
+# `tests/integration/run_sway.sh`, which puts this directory first on PATH.
+#
+# Prints the subset of `niri msg outputs` that the parser reads:
+#   Output <name>
+#     Logical position: <x>, <y>
+#     Logical size: <w>x<h>
+set -euo pipefail
+
+if [ "${1:-}" != "msg" ]; then
+  echo "niri shim: only 'niri msg outputs' is supported" >&2
+  exit 1
+fi
+
+case "${2:-}" in
+  outputs)
+    swaymsg -t get_outputs -r | python3 -c '
+import json, sys
+
+for output in json.load(sys.stdin):
+    rect = output["rect"]
+    print("Output {}".format(output["name"]))
+    print("  Logical position: {}, {}".format(rect["x"], rect["y"]))
+    print("  Logical size: {}x{}".format(rect["width"], rect["height"]))
+'
+    ;;
+  *)
+    echo "niri shim: only 'niri msg outputs' is supported" >&2
+    exit 1
+    ;;
+esac

@@ -40,3 +40,80 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets -- -D warnings
+
+  # End-to-end run against a fake game window in a headless sway session
+  # (tests/integration/run_sway.sh): wlr virtual pointer, grim capture, and the
+  # empty macro clicking a synthetic 12x5 inventory.
+  integration-sway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install system libraries and test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libudev-dev libfontconfig1-dev \
+            libgl1-mesa-dev libegl1 libgl1-mesa-dri libxkbcommon-dev libwayland-dev libx11-dev \
+            libxcb1-dev libxcb-util-dev libxcb-cursor-dev libxcb-image0-dev \
+            libxcb-keysyms1-dev libxcb-render-util0-dev libxcb-ewmh-dev libxcb-icccm4-dev \
+            sway grim wtype python3
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # little_oil opens a uinput device at startup (the headless compositor has
+      # no pointer of its own; the harness holds Ctrl with wtype instead). The
+      # module may be built in but without a udev-created node, so create it
+      # from /proc/misc when needed.
+      - name: Prepare /dev/uinput
+        id: uinput
+        run: |
+          sudo modprobe uinput 2>/dev/null || true
+          if [ ! -e /dev/uinput ]; then
+            minor="$(awk '$2 == "uinput" { print $1 }' /proc/misc 2>/dev/null || true)"
+            if [ -n "$minor" ]; then sudo mknod -m 666 /dev/uinput c 10 "$minor" || true; fi
+          fi
+          if [ ! -e /dev/uinput ]; then
+            echo "::warning::/dev/uinput is not available on this runner — skipping the headless sway integration test"
+            echo "ready=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sudo chmod 666 /dev/uinput
+          echo "ready=1" >> "$GITHUB_OUTPUT"
+      - name: Headless sway integration test
+        if: steps.uinput.outputs.ready == '1'
+        run: bash tests/integration/run_sway.sh
+        env:
+          RUST_LOG: warn
+
+  # No niri integration job: niri has no user-facing headless mode. Its
+  # src/backend/headless.rs is only reached by niri's own test fixture
+  # (`State::new(.., headless: true, ..)`); `niri --help` in 26.04 offers no
+  # flag or environment switch for it, so a niri job would need a nested
+  # compositor session the runner does not have.
+
+  # Advisory end-to-end run against the same fake window on Windows
+  # (tests/integration/run_windows.ps1). A hosted runner can make this
+  # impossible regardless of our code: the session may be locked so SendInput
+  # is dropped, OpenGL 3.3 may be missing so the fake window never opens, or
+  # WGC may find no D3D11 hardware device so `empty`'s capture fails. The
+  # script exits 77 for those environment limits and the step downgrades that
+  # to a warning; any assertion failure still fails the job.
+  integration-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --bin little_oil --example fake_poe
+      - name: Run the fake-window integration test
+        shell: pwsh
+        run: |
+          ./tests/integration/run_windows.ps1
+          $code = $LASTEXITCODE
+          if ($code -eq 77) {
+            Write-Warning "Windows integration test skipped: this runner cannot provide a usable desktop session"
+            exit 0
+          }
+          exit $code
+        env:
+          RUST_LOG: warn
+

@@ -34,6 +34,9 @@
           buildInputs = (with pkgs; [
             cargo rustc rustfmt pre-commit rustPackages.clippy
             pkg-config udev bacon rust-analyzer
+            # tests/integration/run_sway.sh: headless compositor, capture,
+            # virtual-keyboard Ctrl, and a JSON/PPM parser.
+            sway grim wtype python3
           ]) ++ guiLibs;
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath guiLibs;
           RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
