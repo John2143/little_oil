@@ -6,7 +6,8 @@
 //! tab renders the same list.
 use crate::ScreenRegion;
 use crate::app::App;
-use crate::platform::Platform;
+#[cfg(target_os = "linux")]
+use crate::platform::Desktop;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckStatus {
@@ -61,18 +62,10 @@ pub fn region_inside(region: ScreenRegion, ox: i32, oy: i32, w: u32, h: u32) -> 
 pub fn run(app: &App) -> Vec<Check> {
     let mut checks = Vec::new();
     let s = app.settings.read().clone();
-    let platform = app.platform();
+    let desktop = app.desktop();
 
-    // 1. Platform.
-    checks.push(match platform {
-        Platform::Wayland => ok("platform", "wayland"),
-        Platform::Windows => ok("platform", "windows"),
-        Platform::X11 => err(
-            "platform",
-            "X11 is only a compile-time shim — set \"platform\": \"wayland\" in config, \
-             or run on Windows",
-        ),
-    });
+    // 1. Desktop / backend (e.g. "wlr:hyprland" or "windows").
+    checks.push(ok("desktop", app.backend().name()));
 
     // 2. Config file readable and writable.
     match crate::config_path() {
@@ -240,8 +233,8 @@ pub fn run(app: &App) -> Vec<Check> {
         warn("focus-clicks", format!("unusual value {v}"))
     });
 
-    // 9. Pointer scale — irrelevant when the platform positions absolutely.
-    if !platform.uses_absolute_pointer() {
+    // 9. Pointer scale — irrelevant when the desktop positions absolutely.
+    if !desktop.uses_absolute_pointer() {
         checks.push(match s.pointer_scale {
             Some(sc) if (0.5..=3.0).contains(&sc) => ok("pointer-scale", format!("{sc:.2}")),
             Some(sc) => warn("pointer-scale", format!("unusual value {sc}")),
@@ -253,14 +246,21 @@ pub fn run(app: &App) -> Vec<Check> {
         });
     }
 
-    // 10. Linux external prerequisites.
+    // 10. Linux external prerequisites: only the tools the chosen backend uses.
     #[cfg(target_os = "linux")]
     {
-        for (name, bin) in [
-            ("bin-grim", "grim"),
-            ("bin-slurp", "slurp"),
-            ("bin-wl-copy", "wl-copy"),
-        ] {
+        let mut binaries: Vec<(&'static str, &'static str)> = Vec::new();
+        if app.backend().name().starts_with("wlr:") {
+            binaries.push(("bin-grim", "grim"));
+            binaries.push(("bin-wl-copy", "wl-copy"));
+        }
+        match desktop {
+            Desktop::Hyprland => binaries.push(("bin-hyprctl", "hyprctl")),
+            Desktop::Niri => binaries.push(("bin-niri", "niri")),
+            Desktop::Sway => binaries.push(("bin-swaymsg", "swaymsg")),
+            _ => {}
+        }
+        for (name, bin) in binaries {
             match std::process::Command::new(bin).arg("--version").output() {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     checks.push(err(name, format!("'{bin}' not found in PATH — install it")))

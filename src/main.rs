@@ -8,7 +8,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use crate::platform::{Platform, detect_backend};
+use crate::platform::{Desktop, detect_backend};
 
 mod app;
 mod auto_roll;
@@ -50,8 +50,12 @@ pub struct Settings {
     /// (index = col * 5 + row) to match the existing loop order.
     #[serde(default)]
     inv_samples: Option<Vec<[u32; 3]>>,
-    #[serde(default)]
-    pub platform: Option<Platform>,
+    /// Desktop override. `None` auto-detects from the environment; unknown or
+    /// unsupported values are rejected at startup by `detect_backend`. The
+    /// retired `platform` key is dropped when the config loads (see
+    /// `load_config`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desktop: Option<Desktop>,
     #[serde(default)]
     pub inv_region: Option<ScreenRegion>,
     #[serde(default)]
@@ -124,7 +128,7 @@ fn default_settings() -> Settings {
         roll_read_delay: 75,
         focus_clicks: 2,
         inv_samples: None,
-        platform: None,
+        desktop: None,
         inv_region: None,
         stash_region: None,
         game_window_region: None,
@@ -167,6 +171,30 @@ pub fn save_config<T: Serialize>(path: &Path, set: &T) -> Result<(), std::io::Er
     Ok(())
 }
 
+/// Drop the retired `platform` key from a raw config value.
+///
+/// `platform` used to select `wayland` / `x11` / `windows`; Wayland and Windows
+/// now auto-detect (so the value is ignored) and X11 is gone entirely, which
+/// must be an error rather than a silent behavior change.
+fn migrate_config_value(
+    mut value: serde_json::Value,
+    path: &Path,
+) -> anyhow::Result<serde_json::Value> {
+    let Some(obj) = value.as_object_mut() else {
+        return Ok(value);
+    };
+    let Some(old) = obj.remove("platform") else {
+        return Ok(value);
+    };
+    if old.as_str() == Some("x11") {
+        bail!(
+            "X11 is no longer supported — remove \"platform\" from {}",
+            path.display()
+        );
+    }
+    Ok(value)
+}
+
 fn load_config<T>(path: &Path, default: Option<&T>) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned + Serialize + Clone,
@@ -178,9 +206,18 @@ where
                 bail!("Could not read settings: {}", msg);
             }
 
-            let x = serde_json::from_str(&config_text);
+            // Value pre-pass so the retired `platform` key can be migrated
+            // before `T` is deserialized.
+            let value: serde_json::Value = match serde_json::from_str(&config_text) {
+                Ok(value) => value,
+                Err(msg) => bail!(
+                    "Could not parse {}: {msg} — fix or delete the file",
+                    path.display()
+                ),
+            };
+            let value = migrate_config_value(value, path)?;
 
-            match x {
+            match serde_json::from_value(value) {
                 Ok(settings) => Ok(settings),
                 Err(msg) => bail!(
                     "Could not parse {}: {msg} — fix or delete the file",
@@ -203,12 +240,7 @@ fn main() -> anyhow::Result<()> {
     crate::platform::windows::set_dpi_awareness();
     tracing_subscriber::fmt::init();
     let config_path = config_path()?;
-    let mut set = load_config(&config_path, Some(&default_settings()))?;
-    // Ensure platform is set (auto-detect on first run, or use config value).
-    if set.platform.is_none() {
-        set.platform = Some(Platform::detect());
-        save_config(&config_path, &set)?;
-    }
+    let set = load_config(&config_path, Some(&default_settings()))?;
     let backend = detect_backend(&set)?;
     tracing::debug!(backend = backend.name(), "platform backend");
     let app = App::new(set, backend, config_path);
@@ -324,5 +356,86 @@ mod tests {
         let reloaded: Settings =
             load_config::<Settings>(&path, None).expect("reload written default");
         assert_eq!(settings_value(&reloaded), settings_value(&default));
+    }
+
+    #[test]
+    fn legacy_platform_wayland_key_loads_as_auto_detect() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(&path, r#"{"platform":"wayland","focus_clicks":3}"#).unwrap();
+
+        let loaded: Settings =
+            load_config::<Settings>(&path, None).expect("legacy wayland config must load");
+
+        assert_eq!(
+            loaded.desktop, None,
+            "auto-detect means no explicit override"
+        );
+        assert_eq!(loaded.focus_clicks, 3, "unrelated settings must survive");
+        let reserialized = serde_json::to_string(&loaded).unwrap();
+        assert!(
+            !reserialized.contains("\"platform\""),
+            "the retired key must not be written back: {reserialized}"
+        );
+    }
+
+    #[test]
+    fn legacy_platform_windows_key_loads_as_auto_detect() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(&path, r#"{"platform":"windows"}"#).unwrap();
+
+        let loaded: Settings =
+            load_config::<Settings>(&path, None).expect("legacy windows config must load");
+        assert_eq!(loaded.desktop, None);
+    }
+
+    #[test]
+    fn legacy_platform_x11_key_errors_and_names_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let original = r#"{"platform":"x11"}"#;
+        fs::write(&path, original).unwrap();
+
+        let err = load_config::<Settings>(&path, None).expect_err("X11 must be rejected");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("X11 is no longer supported"),
+            "error must explain the removal, got: {msg}"
+        );
+        assert!(
+            msg.contains(&path.display().to_string()),
+            "error must name the config file, got: {msg}"
+        );
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            original,
+            "a rejected config must be left untouched"
+        );
+    }
+
+    #[test]
+    fn desktop_override_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let mut settings = default_settings();
+        settings.desktop = Some(Desktop::Hyprland);
+
+        save_config(&path, &settings).expect("save override");
+        let loaded: Settings = load_config::<Settings>(&path, None).expect("load override");
+
+        assert_eq!(loaded.desktop, Some(Desktop::Hyprland));
+        assert_eq!(settings_value(&loaded), settings_value(&settings));
+    }
+
+    #[test]
+    fn unknown_config_keys_are_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(&path, r#"{"future_option":true,"focus_clicks":4}"#).unwrap();
+
+        let loaded: Settings =
+            load_config::<Settings>(&path, None).expect("unknown keys must not fail the load");
+        assert_eq!(loaded.focus_clicks, 4);
     }
 }

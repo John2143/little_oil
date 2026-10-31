@@ -195,16 +195,16 @@ impl LittleOilGui {
 
     fn summary_line(&self) -> String {
         let s = self.app.settings.read();
-        let plats = s
-            .platform
-            .map(|p| format!("{p:?}"))
+        let desktop = s
+            .desktop
+            .map(|d| format!("{d:?}"))
             .unwrap_or_else(|| "auto".into());
         let inv = s
             .inv_region
             .map(|r| format!("{}x{}", r.width, r.height))
             .unwrap_or_else(|| "not set".into());
         format!(
-            "platform: {plats} · inventory: {inv} · samples: {}",
+            "desktop: {desktop} · inventory: {inv} · samples: {}",
             s.inv_samples.as_ref().map(|v| v.len()).unwrap_or(0)
         )
     }
@@ -635,7 +635,7 @@ impl LittleOilGui {
     /// Absolute-positioning platforms (niri on Linux, Windows) never need it.
     #[cfg(target_os = "linux")]
     fn wizard_pointer_step_needed(&self) -> bool {
-        !self.app.platform().uses_absolute_pointer()
+        !self.app.desktop().uses_absolute_pointer()
     }
 
     #[cfg(not(target_os = "linux"))]

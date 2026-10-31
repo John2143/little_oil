@@ -9,7 +9,7 @@
 //! in a fake (see `test_support::FakeBackend`).
 
 use crate::ScreenRegion;
-use crate::platform::{Input, InputButton, InputKey, Platform};
+use crate::platform::{Desktop, Input, InputButton, InputKey};
 use crate::screenshot::ScreenshotData;
 
 use crate::Settings;
@@ -84,6 +84,9 @@ pub(crate) trait Backend: Send + Sync {
 #[cfg(target_os = "linux")]
 pub(crate) struct WlrBackend {
     input: Mutex<Input>,
+    /// Desktop this backend is serving; reported by `name()` and used to pick
+    /// the compositor's window-lookup tooling.
+    desktop: Desktop,
     /// Relative device units per screen pixel for the uinput fallback path.
     /// Seeded from the config and refreshed by `App::save_settings`.
     pointer_scale: RwLock<f32>,
@@ -91,9 +94,10 @@ pub(crate) struct WlrBackend {
 
 #[cfg(target_os = "linux")]
 impl WlrBackend {
-    pub(crate) fn new(settings: &Settings) -> anyhow::Result<Self> {
+    pub(crate) fn new(settings: &Settings, desktop: Desktop) -> anyhow::Result<Self> {
         Ok(Self {
-            input: Mutex::new(Input::new(Platform::Wayland)?),
+            input: Mutex::new(Input::new()?),
+            desktop,
             pointer_scale: RwLock::new(settings.pointer_scale.unwrap_or(1.25)),
         })
     }
@@ -134,11 +138,11 @@ impl Backend for WlrBackend {
 
     fn move_to(&self, x: i32, y: i32) {
         let scale = *self.pointer_scale.read();
-        self.input.lock().move_mouse(x, y, scale, Platform::Wayland);
+        self.input.lock().move_mouse(x, y, scale);
     }
 
     fn button(&self, b: InputButton, pressed: bool) {
-        self.input.lock().button(b, pressed, Platform::Wayland);
+        self.input.lock().button(b, pressed);
     }
 
     fn key(&self, k: InputKey, pressed: bool) {
@@ -199,7 +203,17 @@ impl Backend for WlrBackend {
     }
 
     fn name(&self) -> &'static str {
-        "wayland"
+        match self.desktop {
+            Desktop::Hyprland => "wlr:hyprland",
+            Desktop::Niri => "wlr:niri",
+            Desktop::Sway => "wlr:sway",
+            Desktop::Kde => "wlr:kde",
+            Desktop::Gnome => "wlr:gnome",
+            Desktop::OtherWayland => "wlr:other",
+            // Unreachable: `detect_backend` refuses the Windows override on
+            // Linux.
+            Desktop::Windows => "wlr",
+        }
     }
 
     fn set_pointer_scale(&self, scale: f32) {
@@ -224,7 +238,7 @@ pub(crate) struct WindowsBackend {
 impl WindowsBackend {
     pub(crate) fn new() -> anyhow::Result<Self> {
         Ok(Self {
-            input: Mutex::new(Input::new(Platform::Windows)?),
+            input: Mutex::new(Input::new()?),
         })
     }
 }
@@ -244,11 +258,11 @@ impl Backend for WindowsBackend {
 
     fn move_to(&self, x: i32, y: i32) {
         // Absolute positioning: no pointer_scale needed.
-        self.input.lock().move_mouse(x, y, 1.0, Platform::Windows);
+        self.input.lock().move_mouse(x, y, 1.0);
     }
 
     fn button(&self, b: InputButton, pressed: bool) {
-        self.input.lock().button(b, pressed, Platform::Windows);
+        self.input.lock().button(b, pressed);
     }
 
     fn key(&self, k: InputKey, pressed: bool) {
@@ -319,22 +333,32 @@ fn crop(frame: &ScreenshotData, region: ScreenRegion) -> anyhow::Result<Screensh
 
 // ── construction ──────────────────────────────────────────────────
 
-/// Build the backend for this OS. Desktop-specific detection arrives with the
-/// later phases; today Linux always gets the wlr backend and Windows the native
-/// one.
+/// Build the backend for this OS and desktop.
+///
+/// The config's `desktop` key overrides auto-detection. On Linux every desktop
+/// currently gets the wlr backend; the KDE/GNOME portal backend lands in a
+/// later step.
 pub(crate) fn detect_backend(settings: &Settings) -> anyhow::Result<Box<dyn Backend>> {
     #[cfg(target_os = "linux")]
     {
-        Ok(Box::new(WlrBackend::new(settings)?))
+        let desktop = settings.desktop.unwrap_or_else(super::detect_desktop);
+        if desktop == Desktop::Windows {
+            anyhow::bail!(
+                "desktop \"windows\" is not supported on Linux — remove \"desktop\" from the config"
+            );
+        }
+        Ok(Box::new(WlrBackend::new(settings, desktop)?))
     }
     #[cfg(target_os = "windows")]
     {
-        let _ = settings;
+        if let Some(desktop) = settings.desktop {
+            if desktop != Desktop::Windows {
+                anyhow::bail!(
+                    "desktop \"{}\" is not supported on Windows — remove \"desktop\" from the config",
+                    desktop.name()
+                );
+            }
+        }
         Ok(Box::new(WindowsBackend::new()?))
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    {
-        let _ = settings;
-        compile_error!("little_oil only supports Linux and Windows")
     }
 }

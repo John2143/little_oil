@@ -4,8 +4,6 @@
 //! the `platform::Backend` implementations, which the rest of the code talks to
 //! so it stays platform-agnostic.
 
-use crate::platform::Platform;
-
 /// Mouse button abstraction — platform codes live in the backend, not leaked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InputButton {
@@ -25,7 +23,6 @@ pub(crate) enum InputKey {
 ///
 /// * Linux   — `VirtualDevice` (uinput) with optional `VirtualPointer` (wlr).
 /// * Windows — `SendInput` (absolute positioning, no scale needed).
-/// * Other   — compile error (unsupported platform).
 pub(crate) enum Input {
     #[cfg(target_os = "linux")]
     Linux {
@@ -34,12 +31,10 @@ pub(crate) enum Input {
     },
     #[cfg(target_os = "windows")]
     Windows,
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    Unsupported,
 }
 
 impl Input {
-    pub(crate) fn new(_platform: Platform) -> anyhow::Result<Self> {
+    pub(crate) fn new() -> anyhow::Result<Self> {
         #[cfg(target_os = "linux")]
         {
             use mouse_keyboard_input::VirtualDevice;
@@ -62,10 +57,6 @@ impl Input {
             // No init needed — SendInput is stateless.
             Ok(Input::Windows)
         }
-        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-        {
-            compile_error!("little_oil only supports Linux and Windows")
-        }
     }
 
     // ── raw primitives ──────────────────────────────────────────
@@ -86,18 +77,17 @@ impl Input {
     /// wlr virtual pointer when available (niri), falling back to the uinput
     /// relative path with `pointer_scale`. On Windows this is a direct
     /// `SetCursorPos` call (no scale).
-    pub(crate) fn move_mouse(&mut self, x: i32, y: i32, pointer_scale: f32, platform: Platform) {
+    pub(crate) fn move_mouse(&mut self, x: i32, y: i32, pointer_scale: f32) {
         #[cfg(target_os = "linux")]
-        if matches!(platform, Platform::Wayland) {
+        {
+            // wlr virtual pointer when the compositor provides one (niri, sway,
+            // Hyprland); otherwise fall back to the uinput relative path.
             let Input::Linux { vpointer, .. } = self;
             if vpointer.move_abs(x, y).is_ok() {
                 std::thread::sleep(std::time::Duration::from_millis(10));
                 return;
             }
             tracing::trace!(x, y, "virtual pointer failed; falling back to uinput");
-        }
-        #[cfg(target_os = "linux")]
-        {
             // uinput relative path: pin to origin, then move relative with scale.
             Self::pin_cursor_to_origin_impl(self);
             let sx = (x as f32 * pointer_scale) as i32;
@@ -107,7 +97,7 @@ impl Input {
         }
         #[cfg(target_os = "windows")]
         {
-            let _ = (pointer_scale, platform);
+            let _ = pointer_scale;
             // SetCursorPos takes physical-pixel screen coordinates directly.
             // SAFETY: SetCursorPos takes two integers and no pointers.
             unsafe {
@@ -129,9 +119,9 @@ impl Input {
     // ── buttons ─────────────────────────────────────────────────
 
     /// Press or release a mouse button on the current backend.
-    pub(crate) fn button(&mut self, btn: InputButton, pressed: bool, platform: Platform) {
+    pub(crate) fn button(&mut self, btn: InputButton, pressed: bool) {
         #[cfg(target_os = "linux")]
-        if matches!(platform, Platform::Wayland) {
+        {
             let Input::Linux { vpointer, .. } = self;
             let code = match btn {
                 InputButton::Left => 0x110u32,
@@ -140,9 +130,6 @@ impl Input {
             if vpointer.button(code, pressed).is_ok() {
                 return;
             }
-        }
-        #[cfg(target_os = "linux")]
-        {
             use mouse_keyboard_input::key_codes;
             let evdev = match btn {
                 InputButton::Left => key_codes::BTN_LEFT,
@@ -159,7 +146,6 @@ impl Input {
         }
         #[cfg(target_os = "windows")]
         {
-            let _ = platform;
             use windows::Win32::UI::Input::KeyboardAndMouse::{
                 INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
                 MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEINPUT, SendInput,

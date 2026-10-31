@@ -1,6 +1,6 @@
 //! The injected `App` context and every command: pointer/keyboard device ops,
 //! screenshots, calibration, stash/map/currency clicking, rolling, and the REPL.
-use crate::platform::{Backend, InputButton, InputKey, Platform};
+use crate::platform::{self, Backend, Desktop, InputButton, InputKey};
 use anyhow::bail;
 use parking_lot::RwLock;
 use rand::seq::SliceRandom;
@@ -50,12 +50,12 @@ impl App {
         self.backend.as_ref()
     }
 
-    /// Read the currently-configured platform (auto-detected on first run).
-    pub(crate) fn platform(&self) -> Platform {
+    /// The desktop we are automating: the config override, else auto-detected.
+    pub(crate) fn desktop(&self) -> Desktop {
         self.settings
             .read()
-            .platform
-            .unwrap_or_else(Platform::detect)
+            .desktop
+            .unwrap_or_else(platform::detect_desktop)
     }
 
     // ── pointer / keyboard primitives ─────────────────────────────
@@ -456,10 +456,7 @@ impl App {
     /// Idempotent: re-running overwrites the entry for the same name. Points are
     /// screen-space, so no screenshot or `set-region` prerequisite.
     fn calibrate_point(&self, name: &str) -> anyhow::Result<()> {
-        let settings = self.settings.read();
-        let platform = settings.platform.unwrap_or_else(Platform::detect);
-        drop(settings);
-        let region = platform.select_region(&format!("Slurp a small box around {name}"))?;
+        let region = platform::select_region(&format!("Slurp a small box around {name}"))?;
         {
             let mut settings = self.settings.write();
             let mut points = settings.points.take().unwrap_or_default();
@@ -935,7 +932,7 @@ impl App {
             Some("calibrate-pointer") => {
                 // Platforms with absolute pointer positioning (niri on Linux,
                 // Windows) don't need pointer_scale calibration.
-                if self.platform().uses_absolute_pointer() {
+                if self.desktop().uses_absolute_pointer() {
                     bail!(
                         "calibrate-pointer is not needed on this platform — pointer \
                          control uses absolute coordinates. Set pointer_scale manually \
@@ -1025,35 +1022,30 @@ impl App {
             },
             Some("set-region") => {
                 let region_name = args.get(1).map(|x| &**x).unwrap_or("help");
-                let platform = self
-                    .settings
-                    .read()
-                    .platform
-                    .unwrap_or_else(Platform::detect);
                 let region = match region_name {
                     "inventory" => {
-                        let r = platform.select_region(
+                        let r = platform::select_region(
                             "Select the INVENTORY grid region (top-left slot to bottom-right slot)",
                         )?;
                         self.settings.write().inv_region = Some(r);
                         r
                     }
                     "stash" => {
-                        let r = platform.select_region(
+                        let r = platform::select_region(
                             "Select the STASH grid region (top-left slot to bottom-right slot)",
                         )?;
                         self.settings.write().stash_region = Some(r);
                         r
                     }
                     "window" => {
-                        let r = platform.select_region(
+                        let r = platform::select_region(
                             "Select the GAME WINDOW (drag around the entire PoE window)",
                         )?;
                         self.settings.write().game_window_region = Some(r);
                         r
                     }
                     "map" => {
-                        let r = platform.select_region(
+                        let r = platform::select_region(
                             "Select the MAP grid region (the 12x7 map window, not the sub-tab row)",
                         )?;
                         self.settings.write().map_region = Some(r);
