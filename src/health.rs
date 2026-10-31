@@ -91,7 +91,7 @@ pub fn run(app: &App) -> Vec<Check> {
     }
 
     // 3. Desktop capture — also feeds the region-bounds check.
-    let capture = platform.capture_desktop();
+    let capture = app.backend().capture_desktop();
     let bounds: Option<(i32, i32, u32, u32)> = match &capture {
         Err(e) => {
             checks.push(err("desktop-capture", format!("{e:#}")));
@@ -114,7 +114,7 @@ pub fn run(app: &App) -> Vec<Check> {
     };
 
     // 4. Game window on screen?
-    match platform.find_game_window() {
+    match app.backend().game_window() {
         Some(r) => checks.push(ok(
             "game-window",
             format!("found at {}x{} @ ({}, {})", r.width, r.height, r.x, r.y),

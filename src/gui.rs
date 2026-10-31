@@ -221,7 +221,7 @@ impl LittleOilGui {
     fn capture_preview(&mut self, ctx: &egui::Context) {
         // Calibration preview: capture the whole desktop, not the current
         // game-window region, so any region can be dragged and selected.
-        match self.app.platform().capture_desktop() {
+        match self.app.backend().capture_desktop() {
             Ok(data) => {
                 let (w, h) = (data.width, data.height);
                 let (ox, oy) = data.origin;
@@ -319,7 +319,7 @@ impl LittleOilGui {
 
     /// Right-click menu: select the whole window under the cursor.
     fn select_whole_window(&mut self, sx: i32, sy: i32) {
-        match self.app.platform().window_under_point(sx, sy) {
+        match self.app.backend().window_at(sx, sy) {
             Some(region) => self.apply_selected_region(self.region_target, region, "window"),
             None => self.push("no window found under the cursor (unsupported compositor?)"),
         }
@@ -327,7 +327,7 @@ impl LittleOilGui {
 
     /// Right-click menu: select the whole monitor under the cursor.
     fn select_whole_monitor(&mut self, sx: i32, sy: i32) {
-        match self.app.platform().monitor_under_point(sx, sy) {
+        match self.app.backend().monitor_at(sx, sy) {
             Some(region) => self.apply_selected_region(self.region_target, region, "monitor"),
             None => self.push("no monitor found under the cursor"),
         }
@@ -675,7 +675,7 @@ impl LittleOilGui {
                     .on_hover_text("Finds the Path of Exile window on this desktop")
                     .clicked()
                 {
-                    self.setup.detected_window = self.app.platform().find_game_window();
+                    self.setup.detected_window = self.app.backend().game_window();
                     self.setup.detect_tried = true;
                 }
                 ui.add_space(4.0);

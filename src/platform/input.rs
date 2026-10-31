@@ -1,8 +1,8 @@
 //! Cross-platform input injection: mouse move, buttons, and keys.
 //!
-//! The `Input` enum owns the per-OS backend state and is constructed once in
-//! `App::new`. All pointer and keyboard operations in `app.rs` channel through
-//! the methods here, keeping the rest of the code platform-agnostic.
+//! The `Input` enum owns the per-OS backend state and is constructed once by
+//! the `platform::Backend` implementations, which the rest of the code talks to
+//! so it stays platform-agnostic.
 
 use crate::platform::Platform;
 

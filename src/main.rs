@@ -8,8 +8,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use crate::platform::Platform;
-use screenshot::ScreenshotData;
+use crate::platform::{Platform, detect_backend};
 
 mod app;
 mod auto_roll;
@@ -77,13 +76,6 @@ pub struct Settings {
     /// decides which tab the GUI opens on. Old configs load as false via serde.
     #[serde(default)]
     setup_complete: bool,
-}
-
-impl Settings {
-    pub(crate) fn screenshot(&self) -> anyhow::Result<ScreenshotData> {
-        let platform = self.platform.unwrap_or_else(Platform::detect);
-        platform.screenshot(self)
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -210,13 +202,16 @@ fn main() -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     crate::platform::windows::set_dpi_awareness();
     tracing_subscriber::fmt::init();
-    let mut set = load_config(&config_path()?, Some(&default_settings()))?;
+    let config_path = config_path()?;
+    let mut set = load_config(&config_path, Some(&default_settings()))?;
     // Ensure platform is set (auto-detect on first run, or use config value).
     if set.platform.is_none() {
         set.platform = Some(Platform::detect());
-        save_config(&config_path()?, &set)?;
+        save_config(&config_path, &set)?;
     }
-    let app = App::new(set)?;
+    let backend = detect_backend(&set)?;
+    tracing::debug!(backend = backend.name(), "platform backend");
+    let app = App::new(set, backend, config_path);
     let args: Vec<String> = std::env::args().skip(1).collect();
     app.run(&args)
 }

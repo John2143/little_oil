@@ -1,7 +1,6 @@
 //! Wayland backend: grim (wlr-screencopy) screenshots and slurp (layer-shell)
 //! region selection.
 use crate::ScreenRegion;
-use crate::Settings;
 use crate::screenshot::ScreenshotData;
 use anyhow::{Context, bail};
 use std::io::Cursor;
@@ -32,10 +31,7 @@ fn grim_capture(geom: Option<&str>, cursor: bool) -> anyhow::Result<image::Dynam
         .context("failed to decode grim output")
 }
 
-pub fn screenshot(settings: &Settings) -> anyhow::Result<ScreenshotData> {
-    let region = settings.game_window_region.ok_or_else(|| {
-        anyhow::anyhow!("Game window region not set — run: little_oil set-region window")
-    })?;
+pub fn capture_region(region: ScreenRegion) -> anyhow::Result<ScreenshotData> {
     let geom = format!(
         "{},{} {}x{}",
         region.x, region.y, region.width, region.height

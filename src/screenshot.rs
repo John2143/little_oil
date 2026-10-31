@@ -1,5 +1,6 @@
 //! Screenshot geometry (Rect, ScreenshotData, pixel access, screen↔frame
 //! conversion) and diff-cluster detection.
+#[derive(Clone)]
 pub struct ScreenshotData {
     pub height: usize,
     pub width: usize,

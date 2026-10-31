@@ -359,7 +359,7 @@ impl ItemList<'_> {
                     return;
                 }
             };
-            match settings.screenshot() {
+            match app.screenshot() {
                 Ok(f) => (settings.pull_delay, grid, f),
                 Err(e) => {
                     println!("Could not screenshot: {e}");
@@ -376,7 +376,7 @@ impl ItemList<'_> {
             let (px, py) = grid.cell_center(x, y);
             let (sx, sy) = frame.frame_to_screen(px, py);
             app.click(sx, sy);
-            std::thread::sleep(std::time::Duration::from_millis(delay + 10));
+            app.backend().sleep_ms(delay + 10);
         };
 
         let clicks = [
@@ -392,7 +392,7 @@ impl ItemList<'_> {
             ("Amulet", self.amulet),
         ];
 
-        std::thread::sleep(std::time::Duration::from_millis(delay));
+        app.backend().sleep_ms(delay);
         for (name, c) in clicks {
             match c {
                 Some(s) => {

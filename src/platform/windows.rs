@@ -2,7 +2,7 @@
 //! clipboard, window discovery, and DPI setup.
 //!
 //! Capture design:
-//! * `screenshot` captures the PoE game window with Windows.Graphics.Capture.
+//! * `capture_window` captures the PoE game window with Windows.Graphics.Capture.
 //!   BitBlt is *not* used for the game window — DX11 content reads back black
 //!   through GDI. WGC reads the DWM-composited surface directly.
 //! * The capture is synchronous: a capture session is started on demand, the
@@ -13,7 +13,6 @@
 //! `frame_to_screen` continues to map capture pixels to click coordinates.
 
 use crate::ScreenRegion;
-use crate::Settings;
 use crate::screenshot::ScreenshotData;
 use anyhow::{Context, Result, bail};
 use std::time::{Duration, Instant};
@@ -189,9 +188,9 @@ fn capture_item_for_window(hwnd: HWND) -> Result<GraphicsCaptureItem> {
     .context("TryCreateFromWindowId failed — is the game window visible and not minimized?")
 }
 
-/// Capture one frame of the game window synchronously.
-pub fn screenshot(settings: &Settings) -> Result<ScreenshotData> {
-    let _ = settings;
+/// Capture one frame of the whole game window synchronously. Callers crop the
+/// returned frame to the region they need (see `backend::crop`).
+pub fn capture_window() -> Result<ScreenshotData> {
     let dev = capture_device()?;
     let hwnd = find_game_window().ok_or_else(|| {
         anyhow::anyhow!("Could not find a Path of Exile window — is the game open?")
@@ -404,12 +403,6 @@ impl Drop for GdiCapture {
             }
         }
     }
-}
-
-/// Full-desktop capture with cursor. Not implemented on Windows — only the
-/// Linux cursor-diff pointer calibration uses it.
-pub fn capture_all() -> Result<ScreenshotData> {
-    bail!("capture_all is not implemented on Windows (only used by Linux pointer calibration)")
 }
 
 /// Bounds of the window under a screen point (`WindowFromPoint`).

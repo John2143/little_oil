@@ -1,11 +1,12 @@
 //! The injected `App` context and every command: pointer/keyboard device ops,
 //! screenshots, calibration, stash/map/currency clicking, rolling, and the REPL.
-use crate::platform::{Input, InputButton, InputKey, Platform};
+use crate::platform::{Backend, InputButton, InputKey, Platform};
 use anyhow::bail;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use rand::seq::SliceRandom;
 use std::io::{self, BufRead, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
 use std::process::Command;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -14,31 +15,39 @@ use crate::auto_roll::{self, AutoRollConfig, AutoRollMod};
 use crate::chaos_recipe;
 use crate::screenshot::{Rect, ScreenshotData};
 use crate::stash_grid::{CellGrid, MAP_COLS, MAP_ROWS, QUAD_COLS, QUAD_ROWS};
-use crate::{NamedPoint, ScreenRegion, Settings, config_path, save_config};
+use crate::{NamedPoint, ScreenRegion, Settings, save_config};
 
 /// The injected context: every command is a method on `App`.
 ///
 /// `App` owns all state that used to live in process globals:
-/// `settings` (was `static SETTINGS`), `device` (was `static FAKE_DEVICE`),
-/// and `vpointer` (was `static VP`). Construct once in `main`, pass
-/// `&App`/`&mut App`-equivalent (`&self` + interior mutability) to everything.
+/// `settings` (was `static SETTINGS`), `backend` (was `static FAKE_DEVICE` and
+/// `static VP`). Construct once in `main`, pass `&App`/`&mut App`-equivalent
+/// (`&self` + interior mutability) to everything.
 pub struct App {
     /// Global settings, shared through a read/write lock. `pub(crate)` so
     /// `auto_roll`/`chaos_recipe` can read the (crate-root-private) `Settings`
     /// fields — see `Settings` in main.rs.
     pub(crate) settings: RwLock<Settings>,
-    /// Cross-platform input backend (mouse + keyboard), constructed once.
-    input: Mutex<Input>,
+    /// Capture, input, clipboard and notification backend, chosen once at
+    /// startup (see `platform::detect_backend`).
+    backend: Box<dyn Backend>,
+    /// Where `save_settings` writes. Passed in so tests never touch the real
+    /// user config.
+    pub(crate) config_path: PathBuf,
 }
 
 impl App {
-    pub(crate) fn new(settings: Settings) -> anyhow::Result<Self> {
-        let platform = settings.platform.unwrap_or_else(Platform::detect);
-        let input = Input::new(platform)?;
-        Ok(Self {
+    pub(crate) fn new(settings: Settings, backend: Box<dyn Backend>, config_path: PathBuf) -> Self {
+        Self {
             settings: RwLock::new(settings),
-            input: Mutex::new(input),
-        })
+            backend,
+            config_path,
+        }
+    }
+
+    /// The desktop backend (capture, input, clipboard).
+    pub(crate) fn backend(&self) -> &dyn Backend {
+        self.backend.as_ref()
     }
 
     /// Read the currently-configured platform (auto-detected on first run).
@@ -51,41 +60,27 @@ impl App {
 
     // ── pointer / keyboard primitives ─────────────────────────────
 
-    /// Emit a raw relative pointer move in device units, with no scaling.
-    /// Linux only — used by pointer calibration.
-    #[cfg(target_os = "linux")]
-    fn move_mouse_raw(&self, dx: i32, dy: i32) {
-        self.input.lock().move_mouse_raw(dx, dy);
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-
-    #[cfg(target_os = "linux")]
-    fn pin_cursor_to_origin(&self) {
-        self.move_mouse_raw(-50000, -50000);
-    }
-
     fn move_mouse(&self, x: i32, y: i32) {
-        let scale = self.settings.read().pointer_scale.unwrap_or(1.25);
-        self.input.lock().move_mouse(x, y, scale, self.platform());
+        self.backend.move_to(x, y);
     }
 
     fn emit_button(&self, btn: InputButton, pressed: bool) {
-        self.input.lock().button(btn, pressed, self.platform());
+        self.backend.button(btn, pressed);
     }
 
     pub(crate) fn click(&self, x: i32, y: i32) {
         self.move_mouse(x, y);
-        std::thread::sleep(std::time::Duration::from_millis(30));
+        self.backend.sleep_ms(30);
         self.emit_button(InputButton::Left, true);
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        self.backend.sleep_ms(10);
         self.emit_button(InputButton::Left, false);
     }
 
     pub(crate) fn click_right(&self, x: i32, y: i32) {
         self.move_mouse(x, y);
-        std::thread::sleep(std::time::Duration::from_millis(30));
+        self.backend.sleep_ms(30);
         self.emit_button(InputButton::Right, true);
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        self.backend.sleep_ms(10);
         self.emit_button(InputButton::Right, false);
     }
 
@@ -94,18 +89,18 @@ impl App {
     /// pass with a fresh screenshot — a mistimed click is retried, not lost.
     pub(crate) fn click_fast(&self, x: i32, y: i32) {
         self.move_mouse(x, y);
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        self.backend.sleep_ms(5);
         self.emit_button(InputButton::Left, true);
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        self.backend.sleep_ms(5);
         self.emit_button(InputButton::Left, false);
     }
 
     /// Right-click variant of [`click_fast`], for `emptyr`.
     pub(crate) fn click_right_fast(&self, x: i32, y: i32) {
         self.move_mouse(x, y);
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        self.backend.sleep_ms(5);
         self.emit_button(InputButton::Right, true);
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        self.backend.sleep_ms(5);
         self.emit_button(InputButton::Right, false);
     }
 
@@ -123,67 +118,73 @@ impl App {
 
     /// Persist the current settings to the config file. Snapshots under a short
     /// read lock and writes with no lock held, so disk I/O never blocks other
-    /// threads' settings access.
+    /// threads' settings access. Also refreshes the backend's pointer scale.
     pub(crate) fn save_settings(&self) -> anyhow::Result<()> {
-        let snapshot = self.settings.read().clone();
-        save_config(&config_path()?, &snapshot)?;
+        let (snapshot, pointer_scale) = {
+            let s = self.settings.read();
+            (s.clone(), s.pointer_scale.unwrap_or(1.25))
+        };
+        self.backend.set_pointer_scale(pointer_scale);
+        save_config(&self.config_path, &snapshot)?;
         Ok(())
     }
 
-    fn try_read_item_on_cursor(&self) -> Option<String> {
-        let platform = self.platform();
+    /// Capture the configured game-window region through the backend.
+    pub(crate) fn screenshot(&self) -> anyhow::Result<ScreenshotData> {
+        let region = self.settings.read().game_window_region.ok_or_else(|| {
+            anyhow::anyhow!("Game window region not set — run: little_oil set-region window")
+        })?;
+        self.backend.capture_region(region)
+    }
 
+    fn try_read_item_on_cursor(&self) -> Option<String> {
         // On Wayland, primary selection availability gates the whole tooltip
-        // pipeline. On other platforms we try anyway — the regular clipboard
-        // is what the game writes to.
+        // pipeline. Elsewhere we try anyway — the regular clipboard is what the
+        // game writes to.
         #[cfg(target_os = "linux")]
-        if !platform.primary_selection_available() {
+        if let Some(wlr) = self.backend.as_wlr()
+            && !wlr.primary_selection_available()
+        {
             tracing::warn!("primary selection protocol not available; tooltip read may fail");
         }
 
         // Clear the clipboard so we detect new text from the game.
-        if let Err(e) = platform.clear_clipboard() {
+        if let Err(e) = self.backend.clear_clipboard() {
             tracing::warn!(?e, "failed to clear clipboard");
             return None;
         }
 
         // Send Ctrl+Alt+C — the in-game item-tooltip copy shortcut.
-        {
-            let mut input = self.input.lock();
-            input.key(InputKey::Ctrl, true);
-            input.key(InputKey::Alt, true);
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            input.key(InputKey::C, true);
-            std::thread::sleep(std::time::Duration::from_millis(rand::random_range(4..25)));
-            input.key(InputKey::C, false);
-            input.key(InputKey::Alt, false);
-            input.key(InputKey::Ctrl, false);
-        }
+        self.backend.key(InputKey::Ctrl, true);
+        self.backend.key(InputKey::Alt, true);
+        self.backend.sleep_ms(5);
+        self.backend.key(InputKey::C, true);
+        self.backend.sleep_ms(rand::random_range(4..25));
+        self.backend.key(InputKey::C, false);
+        self.backend.key(InputKey::Alt, false);
+        self.backend.key(InputKey::Ctrl, false);
 
         // Poll the clipboard for up to ~250ms (50 ticks of 5ms).
         for _ in 0..50 {
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            if let Some(text) = platform.read_clipboard_text() {
+            self.backend.sleep_ms(5);
+            if let Some(text) = self.backend.read_clipboard_text() {
                 return Some(text);
             }
         }
 
         // Retry up to 5 more times with a random stagger (game lag).
         for retry in 0..5 {
-            std::thread::sleep(std::time::Duration::from_millis(rand::random_range(1..150)));
-            {
-                let mut input = self.input.lock();
-                input.key(InputKey::Ctrl, true);
-                input.key(InputKey::Alt, true);
-                input.key(InputKey::C, true);
-                std::thread::sleep(std::time::Duration::from_millis(rand::random_range(4..25)));
-                input.key(InputKey::C, false);
-                input.key(InputKey::Alt, false);
-                input.key(InputKey::Ctrl, false);
-            }
+            self.backend.sleep_ms(rand::random_range(1..150));
+            self.backend.key(InputKey::Ctrl, true);
+            self.backend.key(InputKey::Alt, true);
+            self.backend.key(InputKey::C, true);
+            self.backend.sleep_ms(rand::random_range(4..25));
+            self.backend.key(InputKey::C, false);
+            self.backend.key(InputKey::Alt, false);
+            self.backend.key(InputKey::Ctrl, false);
             for _ in 0..50 {
-                std::thread::sleep(std::time::Duration::from_millis(5));
-                if let Some(text) = platform.read_clipboard_text() {
+                self.backend.sleep_ms(5);
+                if let Some(text) = self.backend.read_clipboard_text() {
                     return Some(text);
                 }
             }
@@ -220,13 +221,17 @@ impl App {
         println!("Measuring pointer scale. Do not move the mouse or type.");
         println!("Close any animated window; a static desktop measures cleanly.");
 
-        self.pin_cursor_to_origin();
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let before = self.platform().capture_all()?;
+        let wlr = self.backend.as_wlr().ok_or_else(|| {
+            anyhow::anyhow!("pointer calibration needs the Wayland (wlr) backend")
+        })?;
 
-        self.move_mouse_raw(D, D);
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let after = self.platform().capture_all()?;
+        wlr.pin_cursor_to_origin();
+        self.backend.sleep_ms(200);
+        let before = wlr.capture_all()?;
+
+        wlr.move_mouse_raw(D, D);
+        self.backend.sleep_ms(200);
+        let after = wlr.capture_all()?;
 
         let bounds = Rect {
             x: 0,
@@ -273,14 +278,13 @@ impl App {
     /// middle cell. `label`/`noun` drive the prompts; `save` persists the grid.
     fn calibrate_grid<const C: usize, const R: usize>(
         &self,
-        snapshot: &Settings,
         region: ScreenRegion,
         label: &str, // "stash" | "map"
         noun: &str,  // "item" | "map"
         save: impl FnOnce(&mut Settings, CellGrid<C, R>),
     ) -> anyhow::Result<()> {
         prompt_enter(&format!("Open the {label} tab."))?;
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        self.backend.sleep_ms(300);
 
         // Each calibration position is captured twice: first with the item in place
         // and a search that matches NOTHING (nonsense string), then with a search
@@ -295,8 +299,8 @@ impl App {
                     "Put the 1×1 {noun} in the {where_text} slot. In the search box type a \
                  nonsense string (e.g. \"zzz\") so NOTHING is highlighted."
                 ))?;
-                std::thread::sleep(std::time::Duration::from_millis(300));
-                let base = snapshot.screenshot()?;
+                self.backend.sleep_ms(300);
+                let base = self.screenshot()?;
 
                 // Convert region from screen space to frame-pixel space.
                 let (bx, by) = base.screen_to_frame(region.x, region.y).ok_or_else(|| {
@@ -314,8 +318,8 @@ impl App {
                 prompt_enter(&format!(
                     "Now search the {noun}'s exact name so ONLY it is highlighted (keep it in the {where_text} slot)."
                 ))?;
-                std::thread::sleep(std::time::Duration::from_millis(300));
-                let cap = snapshot.screenshot()?;
+                self.backend.sleep_ms(300);
+                let cap = self.screenshot()?;
 
                 let clusters = crate::screenshot::diff_clusters(&base, &cap, bounds, 20)?;
                 let cell = clusters
@@ -428,13 +432,9 @@ impl App {
             anyhow::anyhow!("Stash region not set — run: little_oil set-region stash")
         })?;
 
-        self.calibrate_grid::<QUAD_COLS, QUAD_ROWS>(
-            &snapshot,
-            stash_region,
-            "stash",
-            "item",
-            |s, g| s.stash_grid = Some(g),
-        )
+        self.calibrate_grid::<QUAD_COLS, QUAD_ROWS>(stash_region, "stash", "item", |s, g| {
+            s.stash_grid = Some(g)
+        })
     }
 
     fn calibrate_map(&self) -> anyhow::Result<()> {
@@ -447,7 +447,7 @@ impl App {
             anyhow::anyhow!("Map region not set — run: little_oil set-region map")
         })?;
 
-        self.calibrate_grid::<MAP_COLS, MAP_ROWS>(&snapshot, map_region, "map", "map", |s, g| {
+        self.calibrate_grid::<MAP_COLS, MAP_ROWS>(map_region, "map", "map", |s, g| {
             s.map_grid = Some(g)
         })
     }
@@ -502,7 +502,7 @@ impl App {
     fn park_cursor(&self) -> anyhow::Result<()> {
         let (sx, sy) = self.focus_click_point()?;
         self.move_mouse(sx, sy);
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        self.backend.sleep_ms(10);
         Ok(())
     }
 
@@ -521,9 +521,9 @@ impl App {
         let clicks = { self.settings.read().focus_clicks };
         for _ in 0..clicks {
             self.click(sx, sy);
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            self.backend.sleep_ms(20);
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        self.backend.sleep_ms(100);
         Ok(())
     }
 
@@ -554,7 +554,7 @@ impl App {
             Some(g) => g.clone(),
             None => bail!("Map grid not calibrated — run: little_oil calibrate-map"),
         };
-        let frame = settings.screenshot()?;
+        let frame = self.screenshot()?;
         let (px, py) = grid.cell_center(col, row);
         let (sx, sy) = frame.frame_to_screen(px, py);
         self.click(sx, sy);
@@ -569,7 +569,7 @@ impl App {
             Some(g) => g.clone(),
             None => bail!("Stash grid not calibrated — run: little_oil calibrate-stash"),
         };
-        let frame = settings.screenshot()?;
+        let frame = self.screenshot()?;
 
         let mut seen: Vec<String> = Vec::new();
         let mut failed = 0u32;
@@ -582,7 +582,7 @@ impl App {
                 let (px, py) = grid.cell_center(col, row);
                 let (sx, sy) = frame.frame_to_screen(px, py);
                 self.move_mouse(sx, sy);
-                std::thread::sleep(std::time::Duration::from_millis(30));
+                self.backend.sleep_ms(30);
                 match self.try_read_item_on_cursor() {
                     Some(text) if !seen.contains(&text) => seen.push(text),
                     Some(_) => {}
@@ -613,14 +613,14 @@ impl App {
 
         for _ in 1..10 {
             self.click_right(chance.0, chance.1);
-            std::thread::sleep(std::time::Duration::from_millis(sleep_click));
+            self.backend.sleep_ms(sleep_click);
             self.click(slot.0, slot.1);
-            std::thread::sleep(std::time::Duration::from_millis(sleep_read));
+            self.backend.sleep_ms(sleep_read);
 
             self.click_right(scour.0, scour.1);
-            std::thread::sleep(std::time::Duration::from_millis(sleep_click));
+            self.backend.sleep_ms(sleep_click);
             self.click(slot.0, slot.1);
-            std::thread::sleep(std::time::Duration::from_millis(sleep_read));
+            self.backend.sleep_ms(sleep_read);
         }
 
         Ok(())
@@ -660,7 +660,7 @@ impl App {
             )
         })?;
 
-        let frame = settings.screenshot()?;
+        let frame = self.screenshot()?;
 
         let mut samples = vec![[0u32; 3]; 60];
 
@@ -679,20 +679,10 @@ impl App {
             }
         }
 
-        let note = Command::new("notify-send")
-            .args([
-                "-u",
-                "low",
-                "Little Oil",
-                &format!(
-                    "Inventory colors calibrated: {} slots x 3 samples",
-                    samples.len()
-                ),
-            ])
-            .spawn();
-        if let Err(e) = note {
-            eprintln!("notify-send failed: {e}");
-        }
+        self.backend.notify(&format!(
+            "Inventory colors calibrated: {} slots x 3 samples",
+            samples.len()
+        ));
         self.settings.write().inv_samples = Some(samples);
         self.save_settings()?;
         Ok(())
@@ -762,7 +752,7 @@ impl App {
             // Park the cursor off any item and wait a frame, so no slot is
             // hovered (and no highlight pollutes the probe pixels).
             self.park_cursor()?;
-            let frame = settings.screenshot()?;
+            let frame = self.screenshot()?;
             let mut cells = Self::occupied_inv_cells(&frame, inv_region, expected)?;
             let occupied = cells.len() as u32;
             info!(pass = pass + 1, occupied, first_cell = ?cells.first(), "empty pass");
@@ -808,16 +798,16 @@ impl App {
             // produces the same fixed scan pattern twice.
             cells.shuffle(&mut rand::rng());
 
-            self.input.lock().key(InputKey::Ctrl, true);
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            self.backend.key(InputKey::Ctrl, true);
+            self.backend.sleep_ms(5);
             for (sx, sy) in &cells {
                 clicker(self, *sx, *sy);
                 clicked += 1;
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                self.backend.sleep_ms(10);
             }
-            self.input.lock().key(InputKey::Ctrl, false);
+            self.backend.key(InputKey::Ctrl, false);
             // Give the last item's move a beat before the next screenshot.
-            std::thread::sleep(std::time::Duration::from_millis(30));
+            self.backend.sleep_ms(30);
         }
 
         // If the loop ended while cells were still occupied (the 3rd pass
@@ -827,7 +817,7 @@ impl App {
             // Same park before the recount — the cursor is still over the last
             // clicked slot.
             self.park_cursor()?;
-            let frame = settings.screenshot()?;
+            let frame = self.screenshot()?;
             remaining = Self::occupied_inv_cells(&frame, inv_region, expected)?.len() as u32;
         }
 
@@ -847,28 +837,18 @@ impl App {
 
         // A short beat after the focus click; the macro's screenshots drive
         // the actual pacing from here.
-        std::thread::sleep(std::time::Duration::from_millis(150));
+        self.backend.sleep_ms(150);
         let (clicked, remaining) = self.empty_inv_macro(clicker)?;
-        let note = Command::new("notify-send")
-            .args([
-                "-u",
-                "low",
-                "Little Oil",
-                &format!(
-                    "Inventory cleared: {} clicked, {} remain",
-                    clicked, remaining
-                ),
-            ])
-            .spawn();
-        if let Err(e) = note {
-            tracing::error!(?e, "notify-send failed");
-        }
+        self.backend.notify(&format!(
+            "Inventory cleared: {} clicked, {} remain",
+            clicked, remaining
+        ));
         Ok(())
     }
 
     fn sort_quad(&self, times: u32) -> anyhow::Result<()> {
         self.focus_game_window()?;
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        self.backend.sleep_ms(300);
 
         let settings = self.settings.read().clone();
         let delay = settings.pull_delay;
@@ -876,7 +856,7 @@ impl App {
             Some(g) => g.clone(),
             None => bail!("Stash grid not calibrated — run: little_oil calibrate-stash"),
         };
-        let frame = settings.screenshot()?;
+        let frame = self.screenshot()?;
 
         let mut movesleft = times;
         for row in 0..QUAD_ROWS {
@@ -888,7 +868,7 @@ impl App {
                     let (px, py) = grid.cell_center(col, row);
                     let (sx, sy) = frame.frame_to_screen(px, py);
                     self.click(sx, sy);
-                    std::thread::sleep(std::time::Duration::from_millis(delay));
+                    self.backend.sleep_ms(delay);
                     movesleft -= 1;
                 }
             }

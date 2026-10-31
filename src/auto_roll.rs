@@ -74,13 +74,13 @@ pub fn auto_roll(app: &crate::App, path: &str, times: i64) -> Option<RollResult>
     let mut res;
     println!("rolling! (click {sleep_click}ms, read {sleep_read}ms)");
     app.click(3, 3);
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    app.backend().sleep_ms(500);
     loop {
-        std::thread::sleep(std::time::Duration::from_millis(sleep_click));
+        app.backend().sleep_ms(sleep_click);
         app.click_right(alt.0, alt.1);
-        std::thread::sleep(std::time::Duration::from_millis(sleep_click * 2));
+        app.backend().sleep_ms(sleep_click * 2);
         app.click(slot.0, slot.1);
-        std::thread::sleep(std::time::Duration::from_millis(sleep_read));
+        app.backend().sleep_ms(sleep_read);
 
         println!("alt");
         let Some(item) = app.read_item_on_cursor() else {
@@ -97,11 +97,11 @@ pub fn auto_roll(app: &crate::App, path: &str, times: i64) -> Option<RollResult>
         if (!res.has_prefix && config.needs_prefix()) || (!res.has_suffix && config.needs_suffix())
         {
             println!("aug");
-            std::thread::sleep(std::time::Duration::from_millis(sleep_click));
+            app.backend().sleep_ms(sleep_click);
             app.click_right(aug.0, aug.1);
-            std::thread::sleep(std::time::Duration::from_millis(sleep_click));
+            app.backend().sleep_ms(sleep_click);
             app.click(slot.0, slot.1);
-            std::thread::sleep(std::time::Duration::from_millis(sleep_read));
+            app.backend().sleep_ms(sleep_read);
 
             let Some(aug_item) = app.read_item_on_cursor() else {
                 println!("could not read item on cursor — aborting roll");
@@ -126,16 +126,16 @@ pub fn auto_roll(app: &crate::App, path: &str, times: i64) -> Option<RollResult>
     }
 
     if res.has_mod && config.auto_aug_regal {
-        std::thread::sleep(std::time::Duration::from_millis(sleep_click));
+        app.backend().sleep_ms(sleep_click);
         app.click_right(aug.0, aug.1);
-        std::thread::sleep(std::time::Duration::from_millis(sleep_click));
+        app.backend().sleep_ms(sleep_click);
         app.click(slot.0, slot.1);
 
-        std::thread::sleep(std::time::Duration::from_millis(sleep_click));
+        app.backend().sleep_ms(sleep_click);
         app.click_right(reg.0, reg.1);
-        std::thread::sleep(std::time::Duration::from_millis(sleep_click));
+        app.backend().sleep_ms(sleep_click);
         app.click(slot.0, slot.1);
-        std::thread::sleep(std::time::Duration::from_millis(sleep_read));
+        app.backend().sleep_ms(sleep_read);
 
         let Some(final_item) = app.read_item_on_cursor() else {
             println!("could not read item on cursor — aborting roll");
