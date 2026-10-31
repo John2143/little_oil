@@ -34,6 +34,10 @@ pub struct App {
     /// Where `save_settings` writes. Passed in so tests never touch the real
     /// user config.
     pub(crate) config_path: PathBuf,
+    /// Test-only redirect for the roll log. `None` (always, outside tests)
+    /// means `rolls_log_path()`, i.e. the user's real `$XDG_CONFIG_HOME`.
+    #[cfg(test)]
+    pub(crate) roll_log_override: Option<PathBuf>,
 }
 
 impl App {
@@ -42,6 +46,8 @@ impl App {
             settings: RwLock::new(settings),
             backend,
             config_path,
+            #[cfg(test)]
+            roll_log_override: None,
         }
     }
 
@@ -204,7 +210,12 @@ impl App {
     /// (`$XDG_CONFIG_HOME/little_oil/rolls.log`, JSONL). Logging never fails the
     /// roll: errors are only traced.
     pub(crate) fn log_roll_item(&self, source: &str, item_text: &str) {
-        match crate::rolls_log_path() {
+        #[cfg(test)]
+        let redirected = self.roll_log_override.clone();
+        #[cfg(not(test))]
+        let redirected: Option<PathBuf> = None;
+        let path = redirected.map_or_else(crate::rolls_log_path, Ok);
+        match path {
             Ok(path) => {
                 if let Err(e) = append_roll_log(&path, source, item_text) {
                     tracing::warn!(?e, "could not write roll log");
@@ -1253,6 +1264,492 @@ fn append_roll_log(path: &std::path::Path, source: &str, item_text: &str) -> io:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stash_grid::{MapGrid, StashGrid};
+    use crate::test_support::{Ev, blank_frame, fill_rect, synth_inventory, test_app};
+
+    /// Opaque colour of an empty inventory slot in synthetic frames.
+    const EMPTY: u32 = 0x101010FF;
+    /// Opaque colour of an occupied inventory slot in synthetic frames.
+    const ITEM: u32 = 0xFF0000FF;
+
+    /// The synthetic inventory occupies 12x5 slots of 100x100 px.
+    fn inv_region() -> ScreenRegion {
+        ScreenRegion {
+            x: 100,
+            y: 200,
+            width: 1200,
+            height: 500,
+        }
+    }
+
+    /// Screen centre of inventory cell (`col`, `row`): the middle probe point,
+    /// which is where the empty macro clicks.
+    fn cell_center(col: u32, row: u32) -> (i32, i32) {
+        let r = inv_region();
+        (
+            (r.x + col * r.width / 12 + r.width / 24) as i32,
+            (r.y + row * r.height / 5 + r.height / 10) as i32,
+        )
+    }
+
+    /// Settings for the inventory macros: calibrated regions, every slot
+    /// empty, and no focus clicks so click assertions see only macro clicks.
+    fn inventory_settings() -> Settings {
+        let mut s = crate::default_settings();
+        s.focus_clicks = 0;
+        s.game_window_region = Some(inv_region());
+        s.inv_region = Some(inv_region());
+        s.inv_samples = Some(vec![[EMPTY; 3]; 60]);
+        s
+    }
+
+    /// A uniform `step`-pixel grid whose highlighted cells are painted with
+    /// `highlight` in the synthetic frames.
+    fn grid<const C: usize, const R: usize>(step: u32, highlight: u32) -> CellGrid<C, R> {
+        CellGrid {
+            cols: std::array::from_fn(|i| i as u32 * step),
+            rows: std::array::from_fn(|i| i as u32 * step),
+            cell_w: step,
+            cell_h: step,
+            highlight_color: highlight,
+        }
+    }
+
+    /// Paint a cell's bottom border — the row `is_highlighted` probes.
+    fn highlight_cell(frame: &mut ScreenshotData, grid: &StashGrid, col: usize, row: usize) {
+        let y = grid.rows[row] + grid.cell_h - 2;
+        fill_rect(
+            frame,
+            grid.cols[col],
+            y,
+            grid.cell_w,
+            2,
+            grid.highlight_color,
+        );
+    }
+
+    /// Settings for the stash/map macros: a 300x300 window at (100, 200) with
+    /// a 10-px grid, no focus clicks.
+    fn grid_settings() -> (Settings, ScreenRegion, StashGrid) {
+        let region = ScreenRegion {
+            x: 100,
+            y: 200,
+            width: 300,
+            height: 300,
+        };
+        let grid: StashGrid = grid(10, 0xFF00FFFF);
+        let mut s = crate::default_settings();
+        s.focus_clicks = 0;
+        s.game_window_region = Some(region);
+        s.stash_grid = Some(grid.clone());
+        (s, region, grid)
+    }
+
+    /// Screen positions of every press of `button`, taken from the `Move` that
+    /// immediately precedes it.
+    fn pressed_at(events: &[Ev], button: InputButton) -> Vec<(i32, i32)> {
+        let mut last_move = None;
+        let mut out = Vec::new();
+        for ev in events {
+            match ev {
+                Ev::Move(x, y) => last_move = Some((*x, *y)),
+                Ev::Button(b, true) if *b == button => {
+                    out.push(last_move.expect("every press follows a move"));
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    fn count_key(events: &[Ev], key: InputKey, pressed: bool) -> usize {
+        events
+            .iter()
+            .filter(|e| **e == Ev::Key(key, pressed))
+            .count()
+    }
+
+    fn count_sleeps(events: &[Ev]) -> usize {
+        events.iter().filter(|e| matches!(e, Ev::Sleep(_))).count()
+    }
+
+    #[test]
+    fn empty_inv_clicks_every_occupied_cell_then_stops_on_an_empty_pass() {
+        let (app, fake) = test_app(inventory_settings());
+        let occupied = [(0, 0), (2, 3), (11, 4)];
+        fake.push_frame(synth_inventory(inv_region(), EMPTY, &occupied, ITEM));
+        // Pass 2 sees nothing occupied, so the macro must stop clicking.
+        fake.push_frame(synth_inventory(inv_region(), EMPTY, &[], ITEM));
+
+        app.empty_inv().expect("empty the inventory");
+
+        let events = fake.events();
+        assert_eq!(
+            fake.capture_count(),
+            2,
+            "one capture per pass: the empty pass must not click"
+        );
+
+        let mut clicked = pressed_at(&events, InputButton::Left);
+        clicked.sort();
+        let mut expected: Vec<(i32, i32)> =
+            occupied.iter().map(|&(c, r)| cell_center(c, r)).collect();
+        expected.sort();
+        assert_eq!(
+            clicked, expected,
+            "exactly one click per occupied cell, at its centre"
+        );
+        assert!(
+            pressed_at(&events, InputButton::Right).is_empty(),
+            "empty_inv must only press the left button"
+        );
+
+        // Ctrl is held across a whole pass: down before the first press, up
+        // after the last, and only once.
+        assert_eq!(count_key(&events, InputKey::Ctrl, true), 1);
+        assert_eq!(count_key(&events, InputKey::Ctrl, false), 1);
+        let ctrl_down = events
+            .iter()
+            .position(|e| *e == Ev::Key(InputKey::Ctrl, true))
+            .expect("ctrl down");
+        let ctrl_up = events
+            .iter()
+            .position(|e| *e == Ev::Key(InputKey::Ctrl, false))
+            .expect("ctrl up");
+        let first_press = events
+            .iter()
+            .position(|e| *e == Ev::Button(InputButton::Left, true))
+            .expect("a click");
+        let last_press = events
+            .iter()
+            .rposition(|e| *e == Ev::Button(InputButton::Left, true))
+            .expect("a click");
+        assert!(
+            ctrl_down < first_press && last_press < ctrl_up,
+            "Ctrl must span the pass"
+        );
+
+        assert!(
+            events.contains(&Ev::Notify(
+                "Inventory cleared: 3 clicked, 0 remain".to_string()
+            )),
+            "notification reports the real totals"
+        );
+    }
+
+    #[test]
+    fn empty_inv_clicks_nothing_when_the_inventory_is_already_empty() {
+        let (app, fake) = test_app(inventory_settings());
+        fake.push_frame(synth_inventory(inv_region(), EMPTY, &[], ITEM));
+
+        app.empty_inv().expect("empty inventory is a no-op");
+
+        let events = fake.events();
+        assert!(
+            !events.iter().any(|e| matches!(e, Ev::Button(_, true))),
+            "no clicks on an empty inventory: {events:?}"
+        );
+        assert_eq!(fake.capture_count(), 1, "one pass is enough");
+        assert!(events.contains(&Ev::Notify(
+            "Inventory cleared: 0 clicked, 0 remain".to_string()
+        )));
+    }
+
+    #[test]
+    fn empty_inv_requires_calibrated_colours() {
+        let mut settings = inventory_settings();
+        settings.inv_samples = None;
+        let (app, _fake) = test_app(settings);
+
+        let err = app
+            .empty_inv()
+            .expect_err("uncalibrated colours must error");
+        assert!(
+            format!("{err:#}").contains("reset_inv"),
+            "error must point at reset_inv: {err:#}"
+        );
+    }
+
+    #[test]
+    fn empty_inv_requires_an_inventory_region() {
+        let mut settings = inventory_settings();
+        settings.inv_region = None;
+        let (app, _fake) = test_app(settings);
+
+        let err = app.empty_inv().expect_err("missing inv_region must error");
+        assert!(
+            format!("{err:#}").contains("set-region inventory"),
+            "error must keep the setup hint: {err:#}"
+        );
+    }
+
+    #[test]
+    fn empty_inv_right_uses_the_right_button() {
+        let (app, fake) = test_app(inventory_settings());
+        fake.push_frame(synth_inventory(inv_region(), EMPTY, &[(11, 0)], ITEM));
+        fake.push_frame(synth_inventory(inv_region(), EMPTY, &[], ITEM));
+
+        app.empty_inv_right()
+            .expect("empty the inventory with right clicks");
+
+        let events = fake.events();
+        assert_eq!(
+            pressed_at(&events, InputButton::Right),
+            vec![cell_center(11, 0)],
+            "one right click on the occupied cell"
+        );
+        assert!(
+            pressed_at(&events, InputButton::Left).is_empty(),
+            "emptyr must not press the left button"
+        );
+        assert_eq!(count_key(&events, InputKey::Ctrl, true), 1);
+        assert_eq!(count_key(&events, InputKey::Ctrl, false), 1);
+    }
+
+    #[test]
+    fn reset_inv_colors_samples_every_slot_and_saves_them() {
+        let mut settings = inventory_settings();
+        settings.inv_samples = None;
+        let (app, fake) = test_app(settings);
+        let occupied = [(0u32, 0u32), (5, 2)];
+        fake.push_frame(synth_inventory(inv_region(), EMPTY, &occupied, ITEM));
+
+        app.reset_inv_colors().expect("calibrate inventory colours");
+
+        let samples = app
+            .settings
+            .read()
+            .inv_samples
+            .clone()
+            .expect("samples stored on the App");
+        assert_eq!(samples.len(), 60, "12x5 slots");
+        for col in 0..12u32 {
+            for row in 0..5u32 {
+                let expected = if occupied.contains(&(col, row)) {
+                    ITEM
+                } else {
+                    EMPTY
+                };
+                assert_eq!(
+                    samples[(col * 5 + row) as usize],
+                    [expected; 3],
+                    "slot ({col}, {row})"
+                );
+            }
+        }
+
+        // Saved to the App's config path (the test tempdir), not the user's.
+        let saved: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&app.config_path).expect("config saved"))
+                .expect("config is JSON");
+        assert_eq!(
+            saved["inv_samples"],
+            serde_json::to_value(&samples).unwrap()
+        );
+        assert!(fake.events().contains(&Ev::Notify(
+            "Inventory colors calibrated: 60 slots x 3 samples".to_string()
+        )));
+    }
+
+    #[test]
+    fn sort_quad_clicks_highlighted_cells_in_order_up_to_times() {
+        let (settings, region, stash) = grid_settings();
+        let (app, fake) = test_app(settings);
+
+        let mut frame = blank_frame(region, 0);
+        // Row-major scan order: (0, 0), then (5, 5), then (23, 23). Only the
+        // first two fit in `times = 2`.
+        for (col, row) in [(0usize, 0usize), (5, 5), (23, 23)] {
+            highlight_cell(&mut frame, &stash, col, row);
+        }
+        fake.push_frame(frame);
+
+        app.sort_quad(2).expect("sort");
+
+        let mut expected = vec![
+            Ev::Sleep(100), // focus_game_window's settle
+            Ev::Sleep(300), // sort_quad's pre-capture settle
+        ];
+        for (col, row) in [(0usize, 0usize), (5, 5)] {
+            let (x, y) = stash.cell_center(col, row);
+            let (sx, sy) = (region.x as i32 + x as i32, region.y as i32 + y as i32);
+            expected.extend([
+                Ev::Move(sx, sy),
+                Ev::Sleep(30),
+                Ev::Button(InputButton::Left, true),
+                Ev::Sleep(10),
+                Ev::Button(InputButton::Left, false),
+                Ev::Sleep(50), // pull_delay
+            ]);
+        }
+        assert_eq!(
+            fake.events(),
+            expected,
+            "clicks the first `times` highlighted cells in scan order and stops"
+        );
+    }
+
+    #[test]
+    fn stash_copy_hovers_each_highlighted_cell_and_copies_it() {
+        let (settings, region, stash) = grid_settings();
+        let (app, fake) = test_app(settings);
+
+        let mut frame = blank_frame(region, 0);
+        for (col, row) in [(1usize, 1usize), (2, 1)] {
+            highlight_cell(&mut frame, &stash, col, row);
+        }
+        fake.push_frame(frame);
+        fake.push_clipboard(Some("alpha".to_string()));
+        fake.push_clipboard(Some("alpha".to_string()));
+
+        app.stash_copy().expect("copy the stash");
+
+        let events = fake.events();
+        let moves: Vec<(i32, i32)> = events
+            .iter()
+            .filter_map(|e| match e {
+                Ev::Move(x, y) => Some((*x, *y)),
+                _ => None,
+            })
+            .collect();
+        let mut expected = Vec::new();
+        for (col, row) in [(1usize, 1usize), (2, 1)] {
+            let (x, y) = stash.cell_center(col, row);
+            expected.push((region.x as i32 + x as i32, region.y as i32 + y as i32));
+        }
+        assert_eq!(
+            moves, expected,
+            "hover each highlighted cell (focus_clicks is 0, so the focus point is not clicked)"
+        );
+
+        // One Ctrl+Alt+C per cell, no retries: the clipboard answered at once.
+        assert_eq!(count_key(&events, InputKey::C, true), 2);
+        assert_eq!(count_key(&events, InputKey::Ctrl, true), 2);
+        assert_eq!(count_key(&events, InputKey::Alt, true), 2);
+        assert!(
+            !events.iter().any(|e| matches!(e, Ev::Button(_, true))),
+            "copying never clicks"
+        );
+    }
+
+    #[test]
+    fn click_map_cell_clicks_the_calibrated_cell() {
+        let (mut settings, region, _stash) = grid_settings();
+        let map: MapGrid = grid(10, 0);
+        settings.map_grid = Some(map.clone());
+        let (app, fake) = test_app(settings);
+        fake.push_frame(blank_frame(region, 0));
+
+        app.click_map_cell(3, 4).expect("click the map cell");
+
+        let (x, y) = map.cell_center(3, 4);
+        let expected = vec![
+            Ev::Sleep(100),
+            Ev::Move(region.x as i32 + x as i32, region.y as i32 + y as i32),
+            Ev::Sleep(30),
+            Ev::Button(InputButton::Left, true),
+            Ev::Sleep(10),
+            Ev::Button(InputButton::Left, false),
+        ];
+        assert_eq!(fake.events(), expected);
+    }
+
+    #[test]
+    fn chance_alternates_chance_and_scour_nine_times() {
+        let mut settings = crate::default_settings();
+        let point = |name: &str, x: u32| NamedPoint {
+            name: name.to_string(),
+            region: ScreenRegion {
+                x,
+                y: x,
+                width: 20,
+                height: 20,
+            },
+        };
+        // Centres: chance (20, 20), scour (40, 40), slot (60, 60).
+        settings.points = Some(vec![
+            point("chance", 10),
+            point("scour", 30),
+            point("slot", 50),
+        ]);
+        let (app, fake) = test_app(settings);
+
+        app.chance().expect("chance an item");
+
+        let click = |button: InputButton, at: (i32, i32), settle: u64| {
+            vec![
+                Ev::Move(at.0, at.1),
+                Ev::Sleep(30),
+                Ev::Button(button, true),
+                Ev::Sleep(10),
+                Ev::Button(button, false),
+                Ev::Sleep(settle),
+            ]
+        };
+        let mut expected = Vec::new();
+        for _ in 1..10 {
+            expected.extend(click(InputButton::Right, (20, 20), 30)); // chance
+            expected.extend(click(InputButton::Left, (60, 60), 250)); // slot
+            expected.extend(click(InputButton::Right, (40, 40), 30)); // scour
+            expected.extend(click(InputButton::Left, (60, 60), 250)); // slot
+        }
+        assert_eq!(
+            fake.events(),
+            expected,
+            "nine chance/scour passes with the configured settle times"
+        );
+    }
+
+    #[test]
+    fn reading_the_item_returns_the_clipboard_text_and_sends_ctrl_alt_c() {
+        let (app, fake) = test_app(crate::default_settings());
+        fake.push_clipboard(None);
+        fake.push_clipboard(None);
+        fake.push_clipboard(Some("Rarity: Rare".to_string()));
+
+        assert_eq!(
+            app.try_read_item_on_cursor().as_deref(),
+            Some("Rarity: Rare"),
+            "the third poll sees the game's copy"
+        );
+
+        let events = fake.events();
+        let keys: Vec<Ev> = events
+            .iter()
+            .filter(|e| matches!(e, Ev::Key(..)))
+            .cloned()
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                Ev::Key(InputKey::Ctrl, true),
+                Ev::Key(InputKey::Alt, true),
+                Ev::Key(InputKey::C, true),
+                Ev::Key(InputKey::C, false),
+                Ev::Key(InputKey::Alt, false),
+                Ev::Key(InputKey::Ctrl, false),
+            ],
+            "one Ctrl+Alt+C chord, no retry after the text arrives"
+        );
+        // Two chord settles plus one 5 ms poll per read.
+        assert_eq!(count_sleeps(&events), 5);
+    }
+
+    #[test]
+    fn reading_the_item_gives_up_when_the_clipboard_stays_empty() {
+        let (app, fake) = test_app(crate::default_settings());
+
+        assert_eq!(app.try_read_item_on_cursor(), None);
+
+        let events = fake.events();
+        // 6 keys for the first chord plus 5 retries of 6 keys each.
+        assert_eq!(count_key(&events, InputKey::C, true), 6);
+        assert_eq!(count_key(&events, InputKey::Ctrl, true), 6);
+        assert_eq!(count_key(&events, InputKey::Ctrl, false), 6);
+        // 2 chord settles + 50 polls, then per retry a stagger, a chord settle
+        // and 50 polls.
+        assert_eq!(count_sleeps(&events), 2 + 50 + 5 * (2 + 50));
+    }
 
     #[test]
     fn append_roll_log_writes_jsonl_records() {

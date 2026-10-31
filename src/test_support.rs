@@ -2,6 +2,7 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use parking_lot::Mutex;
 
@@ -62,6 +63,10 @@ pub(crate) struct FakeBackend {
     frames: Mutex<VecDeque<ScreenshotData>>,
     clipboard: Mutex<VecDeque<Option<String>>>,
     events: Mutex<Vec<Ev>>,
+    /// Number of `capture_*` calls, so a test can tell how many times a macro
+    /// re-captured the screen. Not an `Ev`: captures carry no arguments and
+    /// would only add noise to the ordered event assertions.
+    captures: AtomicUsize,
 }
 
 impl FakeBackend {
@@ -80,6 +85,11 @@ impl FakeBackend {
         self.events.lock().clone()
     }
 
+    /// How many `capture_region`/`capture_desktop` calls were made.
+    pub(crate) fn capture_count(&self) -> usize {
+        self.captures.load(Ordering::SeqCst)
+    }
+
     fn record(&self, ev: Ev) {
         self.events.lock().push(ev);
     }
@@ -96,10 +106,12 @@ impl FakeBackend {
 
 impl Backend for FakeBackend {
     fn capture_region(&self, _region: ScreenRegion) -> anyhow::Result<ScreenshotData> {
+        self.captures.fetch_add(1, Ordering::SeqCst);
         self.next_frame()
     }
 
     fn capture_desktop(&self) -> anyhow::Result<ScreenshotData> {
+        self.captures.fetch_add(1, Ordering::SeqCst);
         self.next_frame()
     }
 
@@ -258,6 +270,35 @@ pub(crate) fn synth_inventory(
         height: h,
         pixels,
         origin: (region.x as i32, region.y as i32),
+    }
+}
+
+/// A `region`-sized frame filled with `color`, origin at the region's corner.
+/// Use with [`fill_rect`] to paint the few pixels a macro probes.
+pub(crate) fn blank_frame(region: ScreenRegion, color: u32) -> ScreenshotData {
+    let width = region.width as usize;
+    let height = region.height as usize;
+    let mut pixels = Vec::with_capacity(width * height * 4);
+    for _ in 0..width * height {
+        pixels.extend_from_slice(&rgba(color));
+    }
+    ScreenshotData {
+        width,
+        height,
+        pixels,
+        origin: (region.x as i32, region.y as i32),
+    }
+}
+
+/// Paint a `w`×`h` rectangle at frame pixel (`x`, `y`). Pixels outside the
+/// frame are clipped, so a test can paint a cell border without bounds checks.
+pub(crate) fn fill_rect(frame: &mut ScreenshotData, x: u32, y: u32, w: u32, h: u32, color: u32) {
+    let bytes = rgba(color);
+    for row in y..(y + h).min(frame.height as u32) {
+        for col in x..(x + w).min(frame.width as u32) {
+            let i = (row as usize * frame.width + col as usize) * 4;
+            frame.pixels[i..i + 4].copy_from_slice(&bytes);
+        }
     }
 }
 

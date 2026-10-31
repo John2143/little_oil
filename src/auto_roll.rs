@@ -278,6 +278,123 @@ mod test {
     use super::*;
     use std::path::{Path, PathBuf};
 
+    /// A temp roll config whose only target mod is the amulet's `of the Seal`
+    /// suffix; the game window covers a synthetic screen.
+    fn roll_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let config = dir.path().join("roll.json");
+        std::fs::write(
+            &config,
+            r#"{
+                "item_name": "test amulet",
+                "mods": [{"name": "of the Seal", "is_prefix": false}],
+                "auto_aug_regal": false
+            }"#,
+        )
+        .expect("write roll config");
+        let log = dir.path().join("rolls.log");
+        (dir, config, log)
+    }
+
+    fn tooltip(name: &str) -> String {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("example_items")
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+    }
+
+    /// App with the fake backend, a zero-click focus step and the roll log
+    /// redirected into the fixture tempdir (never the user's config).
+    fn roll_app(log: &Path) -> (crate::App, std::sync::Arc<crate::test_support::FakeBackend>) {
+        let mut settings = crate::default_settings();
+        settings.focus_clicks = 0;
+        settings.game_window_region = Some(crate::ScreenRegion {
+            x: 0,
+            y: 0,
+            width: 1280,
+            height: 720,
+        });
+        let (mut app, fake) = crate::test_support::test_app(settings);
+        app.roll_log_override = Some(log.to_path_buf());
+        (app, fake)
+    }
+
+    fn presses(events: &[crate::test_support::Ev], button: crate::platform::InputButton) -> usize {
+        events
+            .iter()
+            .filter(|e| **e == crate::test_support::Ev::Button(button, true))
+            .count()
+    }
+
+    #[test]
+    fn roll_stops_when_the_target_mod_appears() {
+        use crate::test_support::Ev;
+
+        let (_dir, config, log) = roll_fixture();
+        let (app, fake) = roll_app(&log);
+        // First tooltip: a magic helm with no target mod. Second: the amulet
+        // carrying `of the Seal`.
+        fake.push_clipboard(Some(tooltip("magic_helm.txt")));
+        fake.push_clipboard(Some(tooltip("amulet.txt")));
+
+        let res = auto_roll(&app, config.to_str().expect("utf-8 path"), 5)
+            .expect("a roll result, not an abort");
+
+        assert!(res.has_mod, "the amulet's suffix matches the config");
+        let events = fake.events();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| **e == Ev::Key(crate::platform::InputKey::C, true))
+                .count(),
+            2,
+            "one tooltip read per orb application, no retries"
+        );
+        assert_eq!(
+            presses(&events, crate::platform::InputButton::Right),
+            2,
+            "two alt orbs"
+        );
+        assert_eq!(
+            presses(&events, crate::platform::InputButton::Left),
+            3,
+            "the initial focus click plus one slot click per read"
+        );
+
+        // Both tooltips went into the redirected roll log.
+        let logged = std::fs::read_to_string(&log).expect("roll log written");
+        assert_eq!(logged.lines().count(), 2);
+    }
+
+    #[test]
+    fn roll_aborts_when_the_clipboard_stays_empty() {
+        let (_dir, config, log) = roll_fixture();
+        let (app, fake) = roll_app(&log);
+
+        assert!(
+            auto_roll(&app, config.to_str().expect("utf-8 path"), 5).is_none(),
+            "an unreadable tooltip aborts the roll"
+        );
+
+        let events = fake.events();
+        assert_eq!(
+            presses(&events, crate::platform::InputButton::Right),
+            1,
+            "only the first alt orb was applied"
+        );
+        assert_eq!(
+            presses(&events, crate::platform::InputButton::Left),
+            2,
+            "focus click plus the single slot click"
+        );
+        assert!(
+            !log.exists(),
+            "an aborted roll logs nothing: {}",
+            log.display()
+        );
+    }
+
     /// Collects every regular file under `dir`, recursively.
     fn collect_files(dir: &Path, found: &mut Vec<PathBuf>) {
         let entries =

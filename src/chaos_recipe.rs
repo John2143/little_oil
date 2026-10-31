@@ -448,6 +448,58 @@ mod tests {
     }
 
     #[test]
+    fn take_clicks_the_chosen_item_slots() {
+        use crate::platform::InputButton;
+        use crate::stash_grid::CellGrid;
+        use crate::test_support::{Ev, blank_frame, test_app};
+
+        // A 300x300 game window at (100, 200) with a uniform 10-px quad grid.
+        let region = crate::ScreenRegion {
+            x: 100,
+            y: 200,
+            width: 300,
+            height: 300,
+        };
+        let grid: CellGrid<24, 24> = CellGrid {
+            cols: std::array::from_fn(|i| i as u32 * 10),
+            rows: std::array::from_fn(|i| i as u32 * 10),
+            cell_w: 10,
+            cell_h: 10,
+            highlight_color: 0,
+        };
+        let mut settings = crate::default_settings();
+        settings.focus_clicks = 0;
+        settings.game_window_region = Some(region);
+        settings.stash_grid = Some(grid.clone());
+        let (app, fake) = test_app(settings);
+        fake.push_frame(blank_frame(region, 0));
+
+        let mut apir = fixture();
+        let list = apir.create_item_list();
+        list.take(&app);
+
+        // `take` clicks body, boots, weapon A, weapon B, ring 1, ring 2 —
+        // helmet, gloves, belt and amulet are missing from the fixture.
+        let mut expected = vec![Ev::Sleep(50)]; // pull_delay before the first click
+        for (x, y) in [(4u32, 0u32), (0, 0), (6, 0), (8, 0), (2, 0), (3, 0)] {
+            let (px, py) = grid.cell_center(x as usize, y as usize);
+            expected.extend([
+                Ev::Move(region.x as i32 + px as i32, region.y as i32 + py as i32),
+                Ev::Sleep(30),
+                Ev::Button(InputButton::Left, true),
+                Ev::Sleep(10),
+                Ev::Button(InputButton::Left, false),
+                Ev::Sleep(60), // pull_delay + 10
+            ]);
+        }
+        assert_eq!(
+            fake.events(),
+            expected,
+            "one click per chosen stash slot, in take order"
+        );
+    }
+
+    #[test]
     fn tally_counts_by_category() {
         let ic = fixture().tally();
         assert_eq!(ic.boots, 1);
