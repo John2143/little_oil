@@ -8,10 +8,9 @@ name: build-linux-appimage
 # runnable on Ubuntu 22.04+, Debian 12+, Fedora 37+, Arch, etc. (not on
 # Ubuntu 20.04 / Debian 11). The bundle carries the Wayland/X11 client libs
 # that winit dlopens; libGL and glibc are intentionally left to the host.
-#
-# No `permissions:` block: this repo's default workflow token already has
-# contents:write (the legacy rust.yml release steps prove it). If a future
-# `gh release create` fails with 403, add `permissions: contents: write`.
+
+permissions:
+  contents: write
 
 on:
   push:
@@ -24,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     container: ubuntu:22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install build dependencies
         run: |
@@ -40,6 +39,8 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: Swatinem/rust-cache@v2
+
       - name: Build release
         run: cargo build --release
 
@@ -50,10 +51,12 @@ jobs:
 
       - name: Download AppImage tooling
         run: |
-          curl -L -o linuxdeploy-x86_64.AppImage \
-            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          curl -L -o appimagetool-x86_64.AppImage \
-            https://github.com/AppImage/appimagetool/releases/continuous/appimagetool-x86_64.AppImage
+          curl -fL -o linuxdeploy-x86_64.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+          curl -fL -o appimagetool-x86_64.AppImage \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          echo "c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d  linuxdeploy-x86_64.AppImage" | sha256sum -c -
+          echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  appimagetool-x86_64.AppImage" | sha256sum -c -
           chmod +x linuxdeploy-x86_64.AppImage appimagetool-x86_64.AppImage
 
       - name: Package AppImage
@@ -75,7 +78,7 @@ jobs:
           mv "$artifact" "little_oil-${VER}-x86_64.AppImage"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: little_oil-appimage
           path: little_oil-*.AppImage
@@ -87,9 +90,9 @@ jobs:
           TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
-          GH_REPO: John2143/little_oil
+          GH_REPO: ${{ github.repository }}
         run: |
           # jammy's gh (2.17) has no --latest/--clobber; new non-draft releases
           # are Latest by default.
-          gh release create "$TAG" --title "Little Oil $TAG" --generate-notes || true
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Little Oil $TAG" --generate-notes
           gh release upload "$TAG" "little_oil-${VER}-x86_64.AppImage"
