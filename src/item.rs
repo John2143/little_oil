@@ -1,8 +1,7 @@
 //! Item tooltip parsing and mod classification for rolling.
-use std::{fmt::Display, ops::Range};
+use std::{fmt::Display, ops::Range, sync::LazyLock};
 
 use anyhow::Context;
-use once_cell::sync::Lazy;
 use regex::Regex;
 use rust_decimal::Decimal;
 use tracing::{debug, span, trace};
@@ -104,13 +103,13 @@ pub struct AffixNameTier<'a> {
 //                      {     Prefix          Modifier    "Phantasm's  "  (Tier:      3        )      —  Defences, Evasion        }
 //                         vvvvvvvvvvvvvvvvv               vvvvvvvvvvvv           vvvvvvvvvvvvv            vvvvvvvvvvv
 const IMR_1: &str = r#"\{ (?P<affix_type>\w+) Modifier (?:"(?P<name>.+)" \(Tier: (?P<tier>\d+)\) )?(?:— (?P<affixes>.*) )?\}"#;
-static ITEM_MOD_LINE_1_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(IMR_1).unwrap());
+static ITEM_MOD_LINE_1_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(IMR_1).unwrap());
 
 const IMR_2: &str = r#"(?P<before>[^\d]*)(?P<value>\d+(?:\.\d+)?)?(?:\((?P<bot_roll>\d+(?:\.\d+)?)-(?P<top_roll>\d+(?:\.\d+)?)\))?(?P<end>.*)"#;
-static ITEM_MOD_LINE_2_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(IMR_2).unwrap());
+static ITEM_MOD_LINE_2_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(IMR_2).unwrap());
 
 const CR: &str = r#"(?P<left>[^:]+):(?P<right>.+)"#;
-static COLON_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(CR).unwrap());
+static COLON_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(CR).unwrap());
 
 enum ItemParseSections {
     Class,

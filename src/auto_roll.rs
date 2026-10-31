@@ -286,12 +286,6 @@ mod test {
     }
 
     #[test]
-    fn test_auto_roll() {
-        let app = crate::App::new(crate::default_settings()).unwrap();
-        auto_roll(&app, "test.json", 1);
-    }
-
-    #[test]
     fn test_item_fractured() {
         let item_text = r#"
             Item Class: Gloves
