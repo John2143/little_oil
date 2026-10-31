@@ -17,7 +17,7 @@
 
 use crate::app::App;
 use crate::screenshot::ScreenshotData;
-use crate::{ScreenRegion, config_path, save_config};
+use crate::{ScreenRegion, config_path};
 use anyhow::Result;
 use eframe::egui;
 use parking_lot::Mutex;
@@ -267,9 +267,7 @@ impl LittleOilGui {
                 RegionTarget::Map => s.map_region = Some(region),
             }
         }
-        let settings_snapshot = self.app.settings.read().clone();
-        let path = config_path().unwrap_or_else(|_| "config.json".into());
-        match save_config(&path, &settings_snapshot) {
+        match self.app.save_settings() {
             Ok(()) => self.push(format!(
                 "{what} → {} region: {}x{} at ({}, {})",
                 target.label(),
@@ -839,6 +837,8 @@ impl LittleOilGui {
                 });
             }
             _ => {
+                // Ask before taking the read guard: it re-reads settings.
+                let pointer_needed = self.wizard_pointer_step_needed();
                 let s = self.app.settings.read();
                 let game = s
                     .game_window_region
@@ -850,7 +850,7 @@ impl LittleOilGui {
                     .unwrap_or_else(|| "not set".into());
                 let samples = s.inv_samples.as_ref().map(|v| v.len()).unwrap_or(0);
                 let focus = s.focus_clicks;
-                let scale = if self.wizard_pointer_step_needed() {
+                let scale = if pointer_needed {
                     s.pointer_scale
                         .map(|v| format!("{v:.4}"))
                         .unwrap_or_else(|| "not calibrated — redo step 4".into())
@@ -878,13 +878,8 @@ impl LittleOilGui {
                         .on_hover_text("Mark setup complete and open the Actions tab")
                         .clicked()
                     {
-                        {
-                            let mut w = self.app.settings.write();
-                            w.setup_complete = true;
-                        }
-                        let snapshot = self.app.settings.read().clone();
-                        let path = config_path().unwrap_or_else(|_| "config.json".into());
-                        if let Err(e) = save_config(&path, &snapshot) {
+                        self.app.settings.write().setup_complete = true;
+                        if let Err(e) = self.app.save_settings() {
                             self.push(format!("config write failed: {e:#}"));
                         } else {
                             self.push("Setup complete — you can use the Actions tab now");
@@ -944,48 +939,46 @@ impl LittleOilGui {
         ui.heading("Settings");
         ui.label("Regions are in screen pixels. Calibrate them with the drag-select on the Calibrate tab instead of typing numbers.");
         ui.add_space(6.0);
+        let (mut focus_clicks, mut scale) = {
+            let s = self.app.settings.read();
+            (s.focus_clicks, s.pointer_scale.unwrap_or(1.25))
+        };
         let mut dirty = false;
-        {
-            let mut s = self.app.settings.write();
-            egui::Grid::new("settings_grid")
-                .num_columns(2)
-                .show(ui, |ui| {
-                    let mut focus_clicks = s.focus_clicks;
-                    ui.label("Focus clicks:");
-                    if ui
-                        .add(egui::DragValue::new(&mut focus_clicks).range(1..=5))
-                        .on_hover_text(
-                            "Clicks needed to focus the game window before a macro starts",
-                        )
-                        .changed()
-                    {
-                        s.focus_clicks = focus_clicks;
-                        dirty = true;
-                    }
-                    ui.end_row();
-                    let mut scale = s.pointer_scale.unwrap_or(1.25);
-                    ui.label("Pointer scale:");
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut scale)
-                                .speed(0.01)
-                                .range(0.5..=3.0),
-                        )
-                        .on_hover_text(
-                            "Multiplier applied to pointer movement (game-sensitivity offset)",
-                        )
-                        .changed()
-                    {
-                        s.pointer_scale = Some(scale);
-                        dirty = true;
-                    }
-                    ui.end_row();
-                });
-        }
+        egui::Grid::new("settings_grid")
+            .num_columns(2)
+            .show(ui, |ui| {
+                ui.label("Focus clicks:");
+                if ui
+                    .add(egui::DragValue::new(&mut focus_clicks).range(1..=5))
+                    .on_hover_text("Clicks needed to focus the game window before a macro starts")
+                    .changed()
+                {
+                    dirty = true;
+                }
+                ui.end_row();
+                ui.label("Pointer scale:");
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut scale)
+                            .speed(0.01)
+                            .range(0.5..=3.0),
+                    )
+                    .on_hover_text(
+                        "Multiplier applied to pointer movement (game-sensitivity offset)",
+                    )
+                    .changed()
+                {
+                    dirty = true;
+                }
+                ui.end_row();
+            });
         if dirty {
-            let settings_snapshot = self.app.settings.read().clone();
-            let path = config_path().unwrap_or_else(|_| "config.json".into());
-            match save_config(&path, &settings_snapshot) {
+            {
+                let mut s = self.app.settings.write();
+                s.focus_clicks = focus_clicks;
+                s.pointer_scale = Some(scale);
+            }
+            match self.app.save_settings() {
                 Ok(()) => self.push("settings saved"),
                 Err(e) => self.push(format!("config write failed: {e:#}")),
             }

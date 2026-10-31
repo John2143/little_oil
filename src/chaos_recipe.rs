@@ -343,7 +343,7 @@ impl StashAPIResult {
 impl ItemList<'_> {
     fn take(&self, app: &crate::App) {
         let (delay, grid, frame) = {
-            let settings = app.settings.read();
+            let settings = app.settings.read().clone();
             let grid = match &settings.stash_grid {
                 Some(g) => g.clone(),
                 None => {

@@ -121,6 +121,15 @@ impl App {
             .unwrap_or(fallback)
     }
 
+    /// Persist the current settings to the config file. Snapshots under a short
+    /// read lock and writes with no lock held, so disk I/O never blocks other
+    /// threads' settings access.
+    pub(crate) fn save_settings(&self) -> anyhow::Result<()> {
+        let snapshot = self.settings.read().clone();
+        save_config(&config_path()?, &snapshot)?;
+        Ok(())
+    }
+
     fn try_read_item_on_cursor(&self) -> Option<String> {
         let platform = self.platform();
 
@@ -252,11 +261,8 @@ impl App {
         }
         let scale = (sx + sy) / 2.0;
 
-        {
-            let mut settings = self.settings.write();
-            settings.pointer_scale = Some(scale);
-            save_config(&config_path()?, &*settings)?;
-        }
+        self.settings.write().pointer_scale = Some(scale);
+        self.save_settings()?;
         println!("pointer_scale = {scale:.4} (was measured over {D} device units)");
         Ok(())
     }
@@ -403,8 +409,8 @@ impl App {
         {
             let mut settings = self.settings.write();
             save(&mut settings, grid);
-            save_config(&config_path()?, &*settings)?;
         }
+        self.save_settings()?;
 
         println!(
             "{label} grid calibrated: cell {cell_w}x{cell_h}, frame-pixel origin ({origin_x}, {origin_y}) = screen ({sx}, {sy}), highlight 0x{highlight:08X}"
@@ -454,15 +460,17 @@ impl App {
         let platform = settings.platform.unwrap_or_else(Platform::detect);
         drop(settings);
         let region = platform.select_region(&format!("Slurp a small box around {name}"))?;
-        let mut settings = self.settings.write();
-        let mut points = settings.points.take().unwrap_or_default();
-        points.retain(|p| p.name != name);
-        points.push(NamedPoint {
-            name: name.to_string(),
-            region,
-        });
-        settings.points = Some(points);
-        save_config(&config_path()?, &*settings)?;
+        {
+            let mut settings = self.settings.write();
+            let mut points = settings.points.take().unwrap_or_default();
+            points.retain(|p| p.name != name);
+            points.push(NamedPoint {
+                name: name.to_string(),
+                region,
+            });
+            settings.points = Some(points);
+        }
+        self.save_settings()?;
         println!("Point '{name}' saved at ({}, {})", region.x, region.y);
         Ok(())
     }
@@ -541,13 +549,12 @@ impl App {
     /// Click cell (col, row) of the calibrated map grid.
     fn click_map_cell(&self, col: usize, row: usize) -> anyhow::Result<()> {
         self.focus_game_window()?;
-        let settings = self.settings.read();
+        let settings = self.settings.read().clone();
         let grid = match &settings.map_grid {
             Some(g) => g.clone(),
             None => bail!("Map grid not calibrated — run: little_oil calibrate-map"),
         };
         let frame = settings.screenshot()?;
-        drop(settings);
         let (px, py) = grid.cell_center(col, row);
         let (sx, sy) = frame.frame_to_screen(px, py);
         self.click(sx, sy);
@@ -557,13 +564,12 @@ impl App {
     fn stash_copy(&self) -> anyhow::Result<()> {
         self.focus_game_window()?;
 
-        let settings = self.settings.read();
+        let settings = self.settings.read().clone();
         let grid = match &settings.stash_grid {
             Some(g) => g.clone(),
             None => bail!("Stash grid not calibrated — run: little_oil calibrate-stash"),
         };
         let frame = settings.screenshot()?;
-        drop(settings);
 
         let mut seen: Vec<String> = Vec::new();
         let mut failed = 0u32;
@@ -647,7 +653,7 @@ impl App {
     }
 
     pub(crate) fn reset_inv_colors(&self) -> anyhow::Result<()> {
-        let settings = self.settings.read();
+        let settings = self.settings.read().clone();
         let inv_region = settings.inv_region.ok_or_else(|| {
             anyhow::anyhow!(
                 "Inventory region not calibrated — run: little_oil set-region inventory"
@@ -655,7 +661,6 @@ impl App {
         })?;
 
         let frame = settings.screenshot()?;
-        drop(settings);
 
         let mut samples = vec![[0u32; 3]; 60];
 
@@ -674,8 +679,6 @@ impl App {
             }
         }
 
-        let mut settings = self.settings.write();
-
         let note = Command::new("notify-send")
             .args([
                 "-u",
@@ -690,9 +693,8 @@ impl App {
         if let Err(e) = note {
             eprintln!("notify-send failed: {e}");
         }
-        settings.inv_samples = Some(samples);
-
-        save_config(&config_path()?, &*settings)?;
+        self.settings.write().inv_samples = Some(samples);
+        self.save_settings()?;
         Ok(())
     }
 
@@ -739,7 +741,7 @@ impl App {
     /// passes; Ctrl is held for the whole pass so every click is a move.
     /// Returns (items clicked, cells still occupied after the last pass).
     fn empty_inv_macro(&self, clicker: fn(&App, i32, i32)) -> anyhow::Result<(u32, u32)> {
-        let settings = self.settings.read();
+        let settings = self.settings.read().clone();
         let inv_region = settings.inv_region.ok_or_else(|| {
             anyhow::anyhow!(
                 "Inventory region not calibrated — run: little_oil set-region inventory"
@@ -868,14 +870,13 @@ impl App {
         self.focus_game_window()?;
         std::thread::sleep(std::time::Duration::from_millis(300));
 
-        let settings = self.settings.read();
+        let settings = self.settings.read().clone();
         let delay = settings.pull_delay;
         let grid = match &settings.stash_grid {
             Some(g) => g.clone(),
             None => bail!("Stash grid not calibrated — run: little_oil calibrate-stash"),
         };
         let frame = settings.screenshot()?;
-        drop(settings);
 
         let mut movesleft = times;
         for row in 0..QUAD_ROWS {
@@ -1086,7 +1087,7 @@ impl App {
                 #[cfg(not(target_os = "linux"))]
                 let _ = region;
 
-                save_config(&config_path()?, &*self.settings.read())?;
+                self.save_settings()?;
                 #[cfg(target_os = "linux")]
                 let _ = Command::new("notify-send")
                     .args([
@@ -1193,22 +1194,17 @@ impl App {
             match cmd {
                 "pull" | "div" => match rest.parse::<u64>() {
                     Ok(x) => {
-                        let mut s = self.settings.write();
-                        match cmd {
-                            "pull" => s.pull_delay = x,
-                            "div" => s.div_delay = x,
-                            _ => unreachable!(),
+                        {
+                            let mut s = self.settings.write();
+                            match cmd {
+                                "pull" => s.pull_delay = x,
+                                "div" => s.div_delay = x,
+                                _ => unreachable!(),
+                            }
                         }
                         println!("{cmd} delay is {x}");
-                        let path = match config_path() {
-                            Ok(p) => p,
-                            Err(e) => {
-                                println!("could not determine config path: {e}");
-                                continue;
-                            }
-                        };
-                        if let Err(e) = save_config(&path, &*s) {
-                            println!("could not save config: {e}");
+                        if let Err(e) = self.save_settings() {
+                            println!("could not save config: {e:#}");
                         }
                     }
                     Err(_) => println!("invalid delay: {rest}"),

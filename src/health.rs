@@ -60,7 +60,7 @@ pub fn region_inside(region: ScreenRegion, ox: i32, oy: i32, w: u32, h: u32) -> 
 /// `doctor` command and the GUI Health tab.
 pub fn run(app: &App) -> Vec<Check> {
     let mut checks = Vec::new();
-    let s = app.settings.read();
+    let s = app.settings.read().clone();
     let platform = app.platform();
 
     // 1. Platform.
