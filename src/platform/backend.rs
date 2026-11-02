@@ -292,8 +292,8 @@ impl Backend for WindowsBackend {
     }
 
     fn notify(&self, msg: &str) {
-        // Native notifications land with the action registry pass; tracing
-        // keeps the backlog visible until then.
+        // Windows has no toast integration: status goes to the console and the
+        // GUI status line. `notify-rust` is Linux-only (dbus/zbus).
         tracing::info!(notify = msg, "notification");
     }
 

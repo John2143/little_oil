@@ -122,8 +122,12 @@ pub fn run(app: &App) -> Vec<Check> {
             )),
             None => checks.push(err(
                 "game-window",
-                "Path of Exile window not found — launch the game first \
-                 (window detection uses hyprctl; unsupported on other compositors)",
+                format!(
+                    "Path of Exile window not found — launch the game first, or \
+                     drag the window region by hand in Setup step 1 \
+                     ({} window detection returned nothing)",
+                    desktop.name()
+                ),
             )),
         },
     }
@@ -251,8 +255,8 @@ pub fn run(app: &App) -> Vec<Check> {
     {
         let mut binaries: Vec<(&'static str, &'static str)> = Vec::new();
         if app.backend().name().starts_with("wlr:") {
+            // wl-clipboard-rs speaks the protocol in-process — no helper binary.
             binaries.push(("bin-grim", "grim"));
-            binaries.push(("bin-wl-copy", "wl-copy"));
         }
         match desktop {
             Desktop::Hyprland => binaries.push(("bin-hyprctl", "hyprctl")),
